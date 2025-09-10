@@ -105,6 +105,7 @@ class BackupScreen(ScreenBase):
         bar = ProgressBar(self.width-16, 14, 8, 88)
         bar.draw(d, self.progress)
         d.text((8, 110), self.remaining_str, font=self.font_mid, fill=0)
+        d.text((8, self.height-18), 'home', font=self.font_mid, fill=0)
         return img
 
 
@@ -121,6 +122,7 @@ class VerifyScreen(ScreenBase):
         d.text((8, 34), f"Method: {self.method}", font=self.font_mid, fill=0)
         bar = ProgressBar(self.width-16, 14, 8, 70)
         bar.draw(d, self.progress)
+        d.text((8, self.height-18), 'home', font=self.font_mid, fill=0)
         return img
 
 
@@ -210,4 +212,5 @@ class ErrorScreen(ScreenBase):
         d = ImageDraw.Draw(img)
         d.text((8, 8), 'Error', font=self.font_h1, fill=0)
         d.text((8, 34), self.message[:40], font=self.font_mid, fill=0)
+        d.text((8, self.height-18), 'home', font=self.font_mid, fill=0)
         return img
