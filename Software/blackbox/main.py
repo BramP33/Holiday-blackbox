@@ -86,7 +86,7 @@ def run(dev_mode: bool = True):
     # State: simple menu navigation
     menu = ['Start back-up', 'AP-mode', 'Info', 'Settings']
     sel = 0
-    render_and_push(disp, HomeScreen(disp.width, disp.height))
+    render_and_push(disp, HomeScreen(disp.width, disp.height, selected=sel))
 
     # For this skeleton, immediately run selected action if dev_mode (no GPIO)
     if dev_mode:
@@ -99,10 +99,10 @@ def run(dev_mode: bool = True):
             st = buttons.read() or [False, False, False, False]
             if st[0] and not last_state[0]:
                 sel = (sel - 1) % len(menu)
-                render_and_push(disp, HomeScreen(disp.width, disp.height))
+                render_and_push(disp, HomeScreen(disp.width, disp.height, selected=sel))
             if st[1] and not last_state[1]:
                 sel = (sel + 1) % len(menu)
-                render_and_push(disp, HomeScreen(disp.width, disp.height))
+                render_and_push(disp, HomeScreen(disp.width, disp.height, selected=sel))
             if st[2] and not last_state[2]:
                 break
             last_state = st

@@ -137,18 +137,64 @@ def create_app() -> Flask:
             return 'not found', 404
         return send_file(path, as_attachment=True)
 
-    @app.get('/settings')
-    def get_settings():
-        cfg = load_config()
-        return jsonify(cfg)
+    def _render_settings_form(cfg: dict) -> str:
+        return render_template_string(
+            """
+            <h1>Settings</h1>
+            <form method="post">
+              <fieldset><legend>Trip</legend>
+                Name: <input name="trip.name" value="{{cfg['trip']['name']}}"><br>
+                Begin: <input name="trip.begin_date" value="{{cfg['trip']['begin_date']}}"> (YYYY-MM-DD)<br>
+                End: <input name="trip.end_date" value="{{cfg['trip']['end_date']}}"><br>
+              </fieldset>
+              <fieldset><legend>Verification</legend>
+                Mode: <select name="verify.default_mode">
+                  <option value="fast" {% if cfg['verify']['default_mode']=='fast' %}selected{% endif %}>Fast</option>
+                  <option value="sha256" {% if cfg['verify']['default_mode']=='sha256' %}selected{% endif %}>SHA256</option>
+                </select>
+              </fieldset>
+              <fieldset><legend>AP</legend>
+                SSID: <input name="ap.ssid" value="{{cfg['ap']['ssid']}}"><br>
+                Password: <input name="ap.password" value="{{cfg['ap']['password']}}"><br>
+              </fieldset>
+              <fieldset><legend>Web</legend>
+                Page size: <input name="web.page_size" value="{{cfg['web']['page_size']}}" size="4">
+              </fieldset>
+              <fieldset><legend>Proxies</legend>
+                Max cache GB: <input name="previews.max_cache_gb" value="{{cfg['previews']['max_cache_gb']}}" size="4">
+              </fieldset>
+              <button type="submit">Save</button>
+            </form>
+            """,
+            cfg=cfg,
+        )
 
-    @app.post('/settings')
-    def set_settings():
+    def _apply_flat_updates(cfg: dict, updates: dict) -> dict:
+        for k, v in updates.items():
+            path = k.split('.')
+            cur = cfg
+            for key in path[:-1]:
+                cur = cur.setdefault(key, {})
+            # try int cast for known numeric fields
+            if path[-1] in {'page_size', 'max_cache_gb'}:
+                try:
+                    v = int(v)
+                except Exception:
+                    pass
+            cur[path[-1]] = v
+        return cfg
+
+    @app.route('/settings', methods=['GET', 'POST'])
+    def settings_page():
         cfg = load_config()
-        updates = request.json or {}
-        cfg.update(updates)
-        save_config(cfg)
-        return jsonify({'ok': True})
+        if request.method == 'POST':
+            if request.is_json:
+                cfg.update(request.json or {})
+            else:
+                updates = {k: v for k, v in request.form.items()}
+                cfg = _apply_flat_updates(cfg, updates)
+            save_config(cfg)
+        return _render_settings_form(cfg)
 
     return app
 

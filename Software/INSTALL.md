@@ -19,7 +19,7 @@ Full Step‑by‑Step Install
 
 3) Enable SPI and install packages
 - sudo raspi-config → Interface Options → SPI → Enable
-- sudo apt install -y git python3-pip python3-rpi.gpio python3-spidev python3-pil ffmpeg fonts-dejavu avahi-daemon
+- sudo apt install -y git python3-pip python3-venv python3-rpi-lgpio python3-spidev python3-pil ffmpeg fonts-dejavu avahi-daemon
 - For AP-mode: sudo apt install -y network-manager && sudo systemctl enable --now NetworkManager
 
 4) Prepare NVMe mount

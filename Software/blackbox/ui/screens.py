@@ -17,22 +17,32 @@ class ScreenBase:
     def __init__(self, width: int, height: int):
         self.width = width
         self.height = height
-        self.font_big = load_font(36)
-        self.font_mid = load_font(24)
-        self.font_small = load_font(16)
+        # Tuned for 264x176 display
+        self.font_h1 = load_font(24)
+        self.font_big = load_font(18)
+        self.font_mid = load_font(13)
+        self.font_small = load_font(11)
 
     def draw(self) -> Image.Image:
         raise NotImplementedError
 
 
 class HomeScreen(ScreenBase):
+    def __init__(self, width: int, height: int, selected: int = 0):
+        super().__init__(width, height)
+        self.selected = selected
+
     def draw(self) -> Image.Image:
         img = Image.new('1', (self.width, self.height), 1)
         d = ImageDraw.Draw(img)
         y = 10
-        for text in ['- Start back-up', '- AP-mode', '- Info', '- Settings']:
-            d.text((10, y), text, font=self.font_big, fill=0)
-            y += 40
+        items = ['Start back-up', 'AP-mode', 'Info', 'Settings']
+        for idx, text in enumerate(items):
+            prefix = '>' if idx == self.selected else ' '
+            # Keep a small right margin to avoid clipping at 264px
+            line = f"{prefix} {text}"
+            d.text((8, y), line, font=self.font_big, fill=0)
+            y += 26
         return img
 
 
@@ -44,8 +54,8 @@ class InfoScreen(ScreenBase):
     def draw(self) -> Image.Image:
         img = Image.new('1', (self.width, self.height), 1)
         d = ImageDraw.Draw(img)
-        d.text((10, 5), 'Info', font=load_font(42), fill=0)
-        y = 50
+        d.text((8, 4), 'Info', font=self.font_h1, fill=0)
+        y = 40
         lines = [
             f"Video: {self.stats.get('video_hours','0h')}",
             f"Photo: {self.stats.get('photo_count','0')}",
@@ -53,9 +63,9 @@ class InfoScreen(ScreenBase):
             f"Cards backed up: {self.stats.get('cards',0)}",
         ]
         for line in lines:
-            d.text((10, y), line, font=self.font_mid, fill=0)
-            y += 28
-        d.text((10, self.height-26), 'home', font=self.font_mid, fill=0)
+            d.text((8, y), line, font=self.font_mid, fill=0)
+            y += 20
+        d.text((8, self.height-18), 'home', font=self.font_mid, fill=0)
         return img
 
 
@@ -87,14 +97,14 @@ class BackupScreen(ScreenBase):
     def draw(self) -> Image.Image:
         img = Image.new('1', (self.width, self.height), 1)
         d = ImageDraw.Draw(img)
-        d.text((10, 8), 'Backing up', font=load_font(42), fill=0)
-        d.text((10, 58), f"Copying from {self.copying_from} to", font=self.font_small, fill=0)
-        d.text((10, 74), f"{self.copying_to}", font=self.font_small, fill=0)
+        d.text((8, 6), 'Backing up', font=self.font_h1, fill=0)
+        d.text((8, 36), f"From: {self.copying_from}", font=self.font_small, fill=0)
+        d.text((8, 50), f"To:   {self.copying_to}", font=self.font_small, fill=0)
         if self.eta_min is not None:
-            d.text((10, 92), f"Approx. {self.eta_min} min. remaining", font=self.font_small, fill=0)
-        bar = ProgressBar(self.width-20, 16, 10, 120)
+            d.text((8, 64), f"~{self.eta_min} min remaining", font=self.font_small, fill=0)
+        bar = ProgressBar(self.width-16, 14, 8, 88)
         bar.draw(d, self.progress)
-        d.text((10, 146), self.remaining_str, font=self.font_mid, fill=0)
+        d.text((8, 110), self.remaining_str, font=self.font_mid, fill=0)
         return img
 
 
@@ -107,9 +117,9 @@ class VerifyScreen(ScreenBase):
     def draw(self) -> Image.Image:
         img = Image.new('1', (self.width, self.height), 1)
         d = ImageDraw.Draw(img)
-        d.text((10, 10), 'Verifying...', font=load_font(42), fill=0)
-        d.text((10, 60), f"Method: {self.method}", font=self.font_mid, fill=0)
-        bar = ProgressBar(self.width-20, 16, 10, 110)
+        d.text((8, 6), 'Verifying...', font=self.font_h1, fill=0)
+        d.text((8, 34), f"Method: {self.method}", font=self.font_mid, fill=0)
+        bar = ProgressBar(self.width-16, 14, 8, 70)
         bar.draw(d, self.progress)
         return img
 
@@ -122,9 +132,9 @@ class DoneScreen(ScreenBase):
     def draw(self) -> Image.Image:
         img = Image.new('1', (self.width, self.height), 1)
         d = ImageDraw.Draw(img)
-        d.text((10, 14), 'Done!', font=load_font(56), fill=0)
-        d.text((10, 90), f"Backed up {self.files_count} files", font=self.font_mid, fill=0)
-        d.text((10, self.height-26), 'home', font=self.font_mid, fill=0)
+        d.text((8, 10), 'Done!', font=self.font_h1, fill=0)
+        d.text((8, 48), f"Backed up {self.files_count} files", font=self.font_mid, fill=0)
+        d.text((8, self.height-18), 'home', font=self.font_mid, fill=0)
         return img
 
 
@@ -132,10 +142,9 @@ class APConfirmScreen(ScreenBase):
     def draw(self) -> Image.Image:
         img = Image.new('1', (self.width, self.height), 1)
         d = ImageDraw.Draw(img)
-        d.text((10, 10), 'Are you sure you want', font=self.font_mid, fill=0)
-        d.text((10, 36), 'to start the AP?', font=self.font_mid, fill=0)
-        d.text((10, 90), 'yes', font=self.font_big, fill=0)
-        d.text((10, 130), 'No, go back home', font=self.font_big, fill=0)
+        d.text((8, 8), 'Start AP?', font=self.font_h1, fill=0)
+        d.text((8, 46), 'yes', font=self.font_big, fill=0)
+        d.text((8, 74), 'No, go back home', font=self.font_big, fill=0)
         return img
 
 
@@ -147,10 +156,10 @@ class APEnabledScreen(ScreenBase):
     def draw(self) -> Image.Image:
         img = Image.new('1', (self.width, self.height), 1)
         d = ImageDraw.Draw(img)
-        d.text((10, 20), 'AP enabled', font=self.font_big, fill=0)
-        d.text((10, 60), 'Webserver is available at:', font=self.font_mid, fill=0)
-        d.text((10, 86), self.url, font=self.font_mid, fill=0)
-        d.text((10, self.height-26), 'home', font=self.font_mid, fill=0)
+        d.text((8, 8), 'AP enabled', font=self.font_h1, fill=0)
+        d.text((8, 42), 'Web at:', font=self.font_mid, fill=0)
+        d.text((8, 58), self.url, font=self.font_mid, fill=0)
+        d.text((8, self.height-18), 'home', font=self.font_mid, fill=0)
         return img
 
 
@@ -165,8 +174,8 @@ class SettingsScreen(ScreenBase):
     def draw(self) -> Image.Image:
         img = Image.new('1', (self.width, self.height), 1)
         d = ImageDraw.Draw(img)
-        d.text((10, 6), 'Settings', font=load_font(48), fill=0)
-        y = 56
+        d.text((8, 6), 'Settings', font=self.font_h1, fill=0)
+        y = 38
         items = [
             ("Verification:", 'Fast' if self.verify=='fast' else 'SHA256'),
             ("Power-off:", self.power_off),
@@ -174,9 +183,9 @@ class SettingsScreen(ScreenBase):
         ]
         for idx, (k, v) in enumerate(items):
             prefix = '>' if idx == self.selected else ' '
-            d.text((10, y), f"{prefix} {k}  {v}", font=self.font_mid, fill=0)
-            y += 26
-        d.text((10, self.height-26), 'home', font=self.font_mid, fill=0)
+            d.text((8, y), f"{prefix} {k}  {v}", font=self.font_mid, fill=0)
+            y += 18
+        d.text((8, self.height-18), 'home', font=self.font_mid, fill=0)
         return img
 
 
@@ -184,10 +193,10 @@ class SettingsConfirmScreen(ScreenBase):
     def draw(self) -> Image.Image:
         img = Image.new('1', (self.width, self.height), 1)
         d = ImageDraw.Draw(img)
-        d.text((10, 10), 'Settings', font=load_font(42), fill=0)
-        d.text((10, 60), 'Save settings?', font=self.font_mid, fill=0)
-        d.text((10, 100), 'no', font=self.font_mid, fill=0)
-        d.text((10, 130), 'yes', font=self.font_mid, fill=0)
+        d.text((8, 8), 'Settings', font=self.font_h1, fill=0)
+        d.text((8, 34), 'Save settings?', font=self.font_mid, fill=0)
+        d.text((8, 60), 'no', font=self.font_mid, fill=0)
+        d.text((8, 80), 'yes', font=self.font_mid, fill=0)
         return img
 
 
@@ -199,6 +208,6 @@ class ErrorScreen(ScreenBase):
     def draw(self) -> Image.Image:
         img = Image.new('1', (self.width, self.height), 1)
         d = ImageDraw.Draw(img)
-        d.text((10, 10), 'Error', font=load_font(42), fill=0)
-        d.text((10, 60), self.message[:40], font=self.font_mid, fill=0)
+        d.text((8, 8), 'Error', font=self.font_h1, fill=0)
+        d.text((8, 34), self.message[:40], font=self.font_mid, fill=0)
         return img

@@ -20,8 +20,11 @@ class Buttons:
                 GPIO.setmode(GPIO.BCM)
                 for p in self.pins:
                     GPIO.setup(p, GPIO.IN, pull_up_down=GPIO.PUD_UP)
-            except Exception:
-                # Fallback to dev_mode if GPIO unavailable
+                print("[Buttons] RPi.GPIO initialized on pins:", self.pins)
+            except Exception as e:
+                # Fallback to dev_mode if GPIO unavailable (e.g., missing python3-rpi-lgpio on Pi 5)
+                print("[Buttons] GPIO init failed:", e)
+                print("[Buttons] Install 'python3-rpi-lgpio' on Raspberry Pi OS Bookworm.")
                 self.dev_mode = True
                 self._gpio = None
 
