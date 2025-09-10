@@ -34,16 +34,34 @@ Full Step‑by‑Step Install
 - E‑paper (epd2in7_V2): connect SPI pins as per Waveshare manual (MOSI=GPIO10, CLK=GPIO11, CS=GPIO8, DC=GPIO25, RST=GPIO17, BUSY=GPIO24, 3.3V, GND).
 - Buttons (internal pull‑ups, active‑low): GPIO5, GPIO6, GPIO13, GPIO19 to GND.
 
-6) Install the Waveshare Python library
-- Preferred: sudo pip3 install waveshare-epd
-- Or from repo: git clone https://github.com/waveshareteam/e-Paper.git and copy waveshare_epd into site‑packages.
+6) Install the Waveshare Python library (required)
+- The library is not on PyPI, so install it from Waveshare’s GitHub.
+  1) Clone the repo on the Pi:
+     - cd ~ && git clone https://github.com/waveshareteam/e-Paper.git
+  2) Find your Python site‑packages path (where libraries live):
+     - SITE=$(python3 - <<'PY'
+import site
+cands = [p for p in site.getsitepackages() if 'dist-packages' in p] or site.getsitepackages()
+print(cands[0])
+PY)
+     - echo "$SITE"  # Example: /usr/local/lib/python3.11/dist-packages
+  3) Copy the Waveshare library into that folder:
+     - sudo cp -r ~/e-Paper/RaspberryPi_JetsonNano/python/lib/waveshare_epd "$SITE"/
+  4) Verify it works:
+     - python3 - <<'PY'
+from waveshare_epd import epd2in7_V2
+print('waveshare ok')
+PY
+     - If you see “waveshare ok”, you’re done. If not, re‑check that `$SITE/waveshare_epd` exists and contains `__init__.py`.
 
 7) Get and install Holiday Blackbox
-- git clone https://github.com/<your-account>/Holiday-blackbox.git
+- If you’re connected over SSH, use git to download the project directly on the Pi (fastest and cleanest):
+  - git clone https://github.com/<your-account>/Holiday-blackbox.git
 - cd Holiday-blackbox/Software
-- python3 -m pip install -r requirements.txt
-- chmod +x scripts/*.sh && ./scripts/install.sh
-- Enable services: sudo systemctl enable --now blackbox.service blackbox-web.service
+- Run the installer (creates a Python virtual environment and installs deps — avoids the “externally‑managed‑environment” error):
+  - chmod +x scripts/*.sh && ./scripts/install.sh
+- Enable services:
+  - sudo systemctl enable --now blackbox.service blackbox-web.service
 
 8) Configure
 - On first run, Software/config.yml is created. Edit trip name/dates, AP SSID/password, weather coords, device labels, and nvme mount.
@@ -69,4 +87,3 @@ Tips & Troubleshooting
 - Web not reachable: systemctl status blackbox-web; try http://<pi-ip>:8080/
 - AP‑mode: nmcli dev wifi hotspot ifname wlan0 ssid Blackbox password pi
 - Low power pauses backup: use a quality PSU and cable.
-
