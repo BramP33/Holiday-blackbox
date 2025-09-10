@@ -125,7 +125,7 @@ def run(dev_mode: bool = True):
             # Manual backup flow (single source only)
             matches = find_dcim_mounts(cfg['paths']['source_roots'])
             if not matches:
-                render_and_push(disp, ErrorScreen(disp.width, disp.height, 'No media'))
+                render_and_push(disp, ErrorScreen(disp.width, disp.height, 'Please insert SD card to continue'))
                 _wait_for_home(buttons, dev_mode)
                 continue
             if len(matches) > 1:
