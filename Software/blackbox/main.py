@@ -193,4 +193,7 @@ def run(dev_mode: bool = True):
 
 
 if __name__ == '__main__':
-    run(dev_mode=True)
+    # Default to real hardware if available; set BLACKBOX_DEV=1 to force mock mode.
+    import os
+    dev = os.environ.get('BLACKBOX_DEV') == '1'
+    run(dev_mode=dev)
