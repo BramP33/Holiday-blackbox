@@ -1,0 +1,14 @@
+[Unit]
+Description=Holiday Blackbox UI
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/Holiday-blackbox/Software
+ExecStart=/usr/bin/python3 -m blackbox.main
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+

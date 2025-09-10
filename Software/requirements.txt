@@ -1,0 +1,5 @@
+Flask>=2.3
+Pillow>=10.0
+PyYAML>=6.0
+psutil>=5.9
+werkzeug>=2.3

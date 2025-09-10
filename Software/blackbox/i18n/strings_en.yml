@@ -1,0 +1,11 @@
+home:
+  start_backup: "Start back-up"
+  ap_mode: "AP-mode"
+  info: "Info"
+  settings: "Settings"
+
+common:
+  yes: "yes"
+  no: "no"
+  home: "home"
+

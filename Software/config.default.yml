@@ -1,0 +1,66 @@
+ # Default configuration for Holiday Blackbox
+
+language: en
+
+trip:
+  name: My Trip
+  begin_date: 2025-01-01
+  end_date: 2025-12-31
+
+verify:
+  default_mode: fast   # 'fast' or 'sha256'
+
+power_off_screen: info   # 'info' | 'weather' | 'clear'
+
+ap:
+  ssid: Blackbox
+  password: pi
+  channel: auto
+  region: US
+
+previews:
+  video_height: 480
+  video_bitrate: 1200k
+  max_cache_gb: 50
+
+limits:
+  min_free_gb: 10
+
+web:
+  host: 0.0.0.0
+  port: 8080
+  page_size: 50
+
+paths:
+  # Path where NVMe is mounted; a 'Blackbox' folder is created inside.
+  nvme_mount: /mnt/nvme
+  # Source mount roots to scan for DCIM (first found is used for manual backup)
+  source_roots:
+    - /media
+    - /run/media
+    - /mnt
+    - /Volumes
+  # Where proxies/thumbnails are stored (under the Blackbox folder by default)
+  proxies_subdir: proxies
+
+weather:
+  email: user@example.com
+  latitude: 0.0
+  longitude: 0.0
+
+device_labels:
+  gopro: Gopro
+  drone: Drone
+  "360": "360"
+  lumix_g7: Lumix G7
+  camera: Camera
+
+hardware:
+  display: epd2in7_v2
+  orientation: landscape
+  buttons:
+    # GPIO BCM numbers, top->bottom. Internal pull-ups, active-low.
+    - 5
+    - 6
+    - 13
+    - 19
