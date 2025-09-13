@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Blackbox</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css', v='2') }}">
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">
+        <img class="brand-logo" src="{{ url_for('static', filename='icons/blackbox.svg', v='2') }}" alt="Blackbox" />
+        <span>Blackbox</span>
+      </div>
+      <nav class="nav">
+        <a class="nav-link{% if request.path=='/' %} active{% endif %}" href="/" aria-label="Tent">
+          <img class="icon-img" src="{{ url_for('static', filename='icons/tent.svg', v='2') }}" alt="" />
+          <span>Tent</span>
+        </a>
+        <a class="nav-link{% if request.path.startswith('/photos') %} active{% endif %}" href="/photos" aria-label="Photos">
+          <img class="icon-img" src="{{ url_for('static', filename='icons/photo.svg', v='2') }}" alt="" />
+          <span>Photos</span>
+        </a>
+        <a class="nav-link{% if request.path.startswith('/videos') %} active{% endif %}" href="/videos" aria-label="Videos">
+          <img class="icon-img" src="{{ url_for('static', filename='icons/video.svg', v='2') }}" alt="" />
+          <span>Videos</span>
+        </a>
+        <a class="nav-link{% if request.path.startswith('/settings') %} active{% endif %}" href="/settings" aria-label="Settings">
+          <img class="icon-img" src="{{ url_for('static', filename='icons/gear.svg', v='2') }}" alt="" />
+          <span>Settings</span>
+        </a>
+      </nav>
+    </header>
+    <main class="content">
+      {% block content %}{% endblock %}
+    </main>
+    <footer class="footer">
+      <small>&copy; Blackbox</small>
+    </footer>
+  </body>
+</html>

@@ -1,0 +1,23 @@
+{% extends 'base.html' %}
+{% block content %}
+  <h2 class="page-title">Photos</h2>
+  <div class="grid">
+    {% for i in items %}
+      <div class="card">
+        <a class="thumb" href="/download?p={{ i }}">
+          <img loading="lazy" src="/preview/photo?p={{ i }}" alt="photo" />
+        </a>
+        <div class="card-actions">
+          <form method="post" action="/delete" onsubmit="return confirm('Delete this file?');">
+            <input type="hidden" name="p" value="{{ i }}" />
+            <button class="btn danger" type="submit">Delete</button>
+          </form>
+        </div>
+      </div>
+    {% endfor %}
+  </div>
+  <div class="pager">
+    <a class="btn" href="/photos?page={{ 1 if page<=1 else (page-1) }}">Prev</a>
+    <a class="btn" href="/photos?page={{ page+1 }}">Next</a>
+  </div>
+{% endblock %}

@@ -1,0 +1,33 @@
+{% extends 'base.html' %}
+{% block content %}
+  <section class="hero">
+    <div class="hero-inner">
+      <h1>Welcome, traveller</h1>
+      <p>Browse your photos and videos from your journey.</p>
+      <div class="cta">
+        <a class="btn" href="/photos">Open Photos</a>
+        <a class="btn outline" href="/videos">Open Videos</a>
+      </div>
+    </div>
+  </section>
+
+  <section class="feature">
+    <h3 class="section-title">Photo of the day</h3>
+    <div class="potd">
+      {% if potd_url %}
+        <a class="thumb" href="{{ potd_download }}">
+          <img src="{{ potd_url }}" alt="Photo of the day" loading="lazy" />
+        </a>
+      {% else %}
+        <div class="thumb placeholder">
+          <img src="{{ url_for('static', filename='placeholder_photo.svg') }}" alt="No photos yet" />
+        </div>
+      {% endif %}
+    </div>
+  </section>
+
+  <section class="feature">
+    <h3 class="section-title">Camping fact of the day</h3>
+    <p class="fact">{{ camping_fact }}</p>
+  </section>
+{% endblock %}

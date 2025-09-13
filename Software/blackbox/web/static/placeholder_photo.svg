@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 400">
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#0e1519"/>
+      <stop offset="1" stop-color="#1a242b"/>
+    </linearGradient>
+  </defs>
+  <rect width="600" height="400" fill="url(#g)"/>
+  <circle cx="480" cy="90" r="28" fill="#e3b341"/>
+  <path d="M40 320 L160 220 L220 280 L300 200 L420 320 Z" fill="#22323a"/>
+  <path d="M120 320 L220 240 L260 280 L340 220 L440 320 Z" fill="#2a3b44"/>
+  <text x="40" y="360" fill="#9fb3b7" font-family="system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, sans-serif" font-size="22">No photos yet</text>
+</svg>
+

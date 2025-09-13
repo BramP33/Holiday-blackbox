@@ -1,0 +1,52 @@
+{% extends 'base.html' %}
+{% block content %}
+  <h2 class="page-title">Settings</h2>
+  <form class="form" method="post">
+    <fieldset>
+      <legend>Trip</legend>
+      <label> Name
+        <input name="trip.name" value="{{cfg['trip']['name']}}" />
+      </label>
+      <label> Begin (YYYY-MM-DD)
+        <input name="trip.begin_date" value="{{cfg['trip']['begin_date']}}" />
+      </label>
+      <label> End
+        <input name="trip.end_date" value="{{cfg['trip']['end_date']}}" />
+      </label>
+    </fieldset>
+    <fieldset>
+      <legend>Verification</legend>
+      <label> Mode
+        <select name="verify.default_mode">
+          <option value="fast" {% if cfg['verify']['default_mode']=='fast' %}selected{% endif %}>Fast</option>
+          <option value="sha256" {% if cfg['verify']['default_mode']=='sha256' %}selected{% endif %}>SHA256</option>
+        </select>
+      </label>
+    </fieldset>
+    <fieldset>
+      <legend>Access Point</legend>
+      <label> SSID
+        <input name="ap.ssid" value="{{cfg['ap']['ssid']}}" />
+      </label>
+      <label> Password
+        <input name="ap.password" value="{{cfg['ap']['password']}}" />
+      </label>
+    </fieldset>
+    <fieldset>
+      <legend>Web</legend>
+      <label> Page size
+        <input name="web.page_size" value="{{cfg['web']['page_size']}}" size="4" />
+      </label>
+    </fieldset>
+    <fieldset>
+      <legend>Proxies</legend>
+      <label> Max cache (GB)
+        <input name="previews.max_cache_gb" value="{{cfg['previews']['max_cache_gb']}}" size="4" />
+      </label>
+    </fieldset>
+    <div class="form-actions">
+      <button class="btn" type="submit">Save</button>
+    </div>
+  </form>
+{% endblock %}
+

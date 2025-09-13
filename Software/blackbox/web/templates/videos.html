@@ -1,0 +1,28 @@
+{% extends 'base.html' %}
+{% block content %}
+  <h2 class="page-title">Videos</h2>
+  <div class="grid">
+    {% for i in items %}
+      <div class="card">
+        <a class="thumb" href="/preview/video?p={{ i }}" title="Open video">
+          <div class="video-thumb">
+            <!-- Using the video as a posterless element to get first frame on many browsers -->
+            <video preload="metadata" muted playsinline src="/preview/video?p={{ i }}"></video>
+            <span class="play-badge" aria-hidden="true">▶</span>
+          </div>
+        </a>
+        <div class="card-actions">
+          <a class="btn" href="/download?p={{ i }}">Download</a>
+          <form method="post" action="/delete" onsubmit="return confirm('Delete this file?');">
+            <input type="hidden" name="p" value="{{ i }}" />
+            <button class="btn danger" type="submit">Delete</button>
+          </form>
+        </div>
+      </div>
+    {% endfor %}
+  </div>
+  <div class="pager">
+    <a class="btn" href="/videos?page={{ 1 if page<=1 else (page-1) }}">Prev</a>
+    <a class="btn" href="/videos?page={{ page+1 }}">Next</a>
+  </div>
+{% endblock %}

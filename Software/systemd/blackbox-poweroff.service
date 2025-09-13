@@ -1,0 +1,14 @@
+[Unit]
+Description=Render e-paper power-off screen
+DefaultDependencies=no
+Before=poweroff.target halt.target reboot.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/Holiday-blackbox/Software
+ExecStart=/usr/bin/python3 -m blackbox.poweroff
+RemainAfterExit=yes
+
+[Install]
+WantedBy=poweroff.target
+
