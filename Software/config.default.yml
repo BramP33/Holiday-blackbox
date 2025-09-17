@@ -6,19 +6,21 @@ trip:
   name: My Trip
   begin_date: 2025-01-01
   end_date: 2025-12-31
+  places: []
 
 verify:
   default_mode: fast   # 'fast' or 'sha256'
 
-power_off_screen: info   # 'info' | 'weather' | 'clear'
+power_off_screen: trip   # 'info' | 'trip' | 'clear'
 
 ap:
   ssid: Blackbox
-  password: pi
+  password: vakantie
   channel: auto
   region: US
 
 previews:
+  enabled: true
   video_height: 480
   video_bitrate: 1200k
   max_cache_gb: 50
@@ -26,10 +28,16 @@ previews:
 limits:
   min_free_gb: 10
 
+network:
+  # 'ap' to create hotspot, 'wifi' to join known WiFi
+  mode: ap
+
 web:
   host: 0.0.0.0
   port: 8080
   page_size: 50
+  upload_device_label: Uploads
+  upload_max_mb: 8192
 
 paths:
   # Path where NVMe is mounted; a 'Blackbox' folder is created inside.
@@ -43,10 +51,6 @@ paths:
   # Where proxies/thumbnails are stored (under the Blackbox folder by default)
   proxies_subdir: proxies
 
-weather:
-  email: user@example.com
-  latitude: 0.0
-  longitude: 0.0
 
 device_labels:
   gopro: Gopro

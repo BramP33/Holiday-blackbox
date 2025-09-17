@@ -9,6 +9,7 @@ from typing import Callable, Iterable, List, Optional, Tuple
 
 from ..paths import Paths
 from ..config import load_config
+from ..media.metadata import MediaMetadataIndex
 import shutil as _shutil
 from .scanner import classify_device_code
 
@@ -35,27 +36,67 @@ def sha256sum(path: Path) -> str:
     return h.hexdigest()
 
 
-def _iterate_media_files(root: Path) -> Iterable[Path]:
+def _iterate_media_files(
+    root: Path,
+    allowed_exts: Optional[Iterable[str]] = None,
+    min_timestamp: Optional[float] = None,
+) -> Iterable[Path]:
+    if allowed_exts is None:
+        allowed: set[str] = PHOTO_EXTS | VIDEO_EXTS
+    else:
+        allowed = {ext.lower() for ext in allowed_exts}
     for dirpath, _, files in os.walk(root):
         for fn in files:
             p = Path(dirpath) / fn
-            if p.suffix.lower() in PHOTO_EXTS | VIDEO_EXTS:
-                yield p
+            suffix = p.suffix.lower()
+            if suffix not in allowed:
+                continue
+            if min_timestamp is not None:
+                try:
+                    if p.stat().st_mtime < min_timestamp:
+                        continue
+                except FileNotFoundError:
+                    continue
+            yield p
 
 
-def copy_from_source(source_root: Path, paths: Paths, verify_mode: str = 'fast', progress_cb: Optional[Callable[[int, int], None]] = None) -> CopyResult:
+def copy_from_source(
+    source_root: Path,
+    paths: Paths,
+    verify_mode: str = 'fast',
+    progress_cb: Optional[Callable[[int, int], None]] = None,
+    *,
+    allowed_exts: Optional[Iterable[str]] = None,
+    min_timestamp: Optional[float] = None,
+    device_label_override: Optional[str] = None,
+) -> CopyResult:
     device_code = classify_device_code(source_root)
-    files = list(_iterate_media_files(source_root / 'DCIM')) if (source_root / 'DCIM').exists() else list(_iterate_media_files(source_root))
+    # Prefer DCIM folder if present (case-insensitive)
+    dcim_dir = None
+    for dn in ('DCIM', 'dcim'):
+        cand = source_root / dn
+        if cand.exists() and cand.is_dir():
+            dcim_dir = cand
+            break
+    iterator_root = dcim_dir if dcim_dir is not None else source_root
+    files = list(
+        _iterate_media_files(
+            iterator_root,
+            allowed_exts=allowed_exts,
+            min_timestamp=min_timestamp,
+        )
+    )
     total = len(files)
     copied = skipped = replaced = 0
     bytes_copied = 0
     errors: List[str] = []
 
     cfg = load_config()
+    metadata_index = MediaMetadataIndex(paths)
     min_free = int(cfg.get('limits', {}).get('min_free_gb', 10)) * 1_000_000_000
 
     labels = cfg.get('device_labels', {})
-    device_label = labels.get(device_code, device_code)
+    device_label = device_label_override or labels.get(device_code, device_code)
 
     for i, src in enumerate(files, 1):
         try:
@@ -77,6 +118,11 @@ def copy_from_source(source_root: Path, paths: Paths, verify_mode: str = 'fast',
                 # Dedup: compute SHA256 both sides
                 if sha256sum(src) == sha256sum(dst):
                     skipped += 1
+                    if metadata_index and src.suffix.lower() in VIDEO_EXTS:
+                        try:
+                            metadata_index.ensure_for_path(dst)
+                        except Exception:
+                            pass
                     if progress_cb:
                         progress_cb(i, total)
                     continue
@@ -105,6 +151,12 @@ def copy_from_source(source_root: Path, paths: Paths, verify_mode: str = 'fast',
                 if not _verify():
                     errors.append(f'Verify failed: {src}')
                     break
+
+            if metadata_index and src.suffix.lower() in VIDEO_EXTS:
+                try:
+                    metadata_index.ensure_for_path(dst)
+                except Exception:
+                    pass
 
         except Exception as e:  # pragma: no cover
             errors.append(f'Error copying {src}: {e}')

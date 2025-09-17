@@ -1,11 +1,170 @@
 home:
-  start_backup: "Back-up starten"
-  ap_mode: "AP-modus"
-  info: "Info"
-  settings: "Instellingen"
+  menu:
+    start_backup: "Back-up starten"
+    webserver: "Webserver"
+    info: "Info"
+    settings: "Instellingen"
 
 common:
   yes: "ja"
   no: "nee"
   home: "home"
+  error: "Fout"
 
+info:
+  title: "Info"
+  trip: "Reis: {name}"
+  trip_unknown: "Reis: -"
+  video: "Video: {duration}"
+  photo: "Foto: {count}"
+  free: "Vrij: {gb}"
+  devices_title: "Apparaten"
+  devices_none: "nog geen"
+  devices_more: "+{count} meer"
+
+backup:
+  title: "Bezig met kopiëren"
+  from: "Van: {path}"
+  to: "Naar: {path}"
+  eta: "~{minutes} min resterend"
+  free_space: "{gb} vrij"
+
+verify:
+  title: "Verifiëren..."
+  method: "Methode: {method}"
+
+done:
+  title: "Klaar!"
+  summary_files: "{n} bestanden gekopieerd"
+
+proxies:
+  title: "Proxies maken"
+  items_done: "{done}/{total}"
+  building: "Bezig met: {name}"
+
+web:
+  confirm_start_title: "Webserver starten?"
+  no_go_home: "Nee, terug naar home"
+  enabled_title: "Webserver actief"
+  url_label: "Web op:"
+  hint_stop: "3=stop   home"
+  ap_error:
+    start_failed: "Webserver starten mislukt"
+    nmcli_missing: "NetworkManager (nmcli) ontbreekt"
+    ap_password_invalid: "AP-wachtwoord ongeldig (min. 8 tekens)"
+    not_authorized: "Niet geautoriseerd om netwerk te beheren"
+  nav:
+    tent: "Tent"
+    photos: "Foto's"
+    videos: "Video's"
+    settings: "Instellingen"
+  home:
+    welcome_title: "Welkom, reiziger"
+    welcome_sub: "Blader door je foto's en video's van je reis."
+    open_photos: "Open Foto's"
+    open_videos: "Open Video's"
+    potd: "Foto van de dag"
+    camping_fact: "Kampeerfeit van de dag"
+    no_photos_alt: "Nog geen foto's"
+  photos:
+    title: "Foto's"
+    delete_confirm: "Dit bestand verwijderen?"
+    delete_button: "Verwijderen"
+    upload_label: "Foto's uploaden (JPEG/PNG/HEIF)"
+    upload_button: "Uploaden"
+  videos:
+    title: "Video's"
+    download_button: "Downloaden"
+    search_label: "Zoek op locatie"
+    search_placeholder: "Stad, land of bestandsnaam"
+    search_button: "Zoeken"
+    clear_filters: "Wissen"
+    suggestions_label: "Suggesties:"
+    showing_count: "Toont {count} van {total}"
+    active_filter: "Filter: \"{query}\""
+    no_results: "Geen video's gevonden bij deze zoekopdracht."
+    empty: "Nog geen video's."
+    location_unknown: "Locatie onbekend"
+    page_of: "Pagina {page} van {pages}"
+    open_video: "Video openen"
+    upload_title: "Video's uploaden"
+    upload_hint: "Sleep iPhone- of Android-video's hierheen of kies met de knop."
+    upload_button: "Video's selecteren"
+    upload_status_pending: "Wachten op upload"
+    upload_status_uploading: "Bezig met uploaden"
+    upload_status_done: "Geüpload"
+    upload_status_failed: "Upload mislukt"
+    upload_status_duplicate: "Al geïmporteerd"
+    upload_status_before_trip: "Overgeslagen (voor begin van reis)"
+    upload_status_skipped: "Overgeslagen"
+  pager:
+    prev: "Vorige"
+    next: "Volgende"
+  settings:
+    title: "Instellingen"
+    trip: "Reis"
+    trip_name: "Naam"
+    trip_begin: "Begin (JJJJ-MM-DD)"
+    trip_end: "Einde"
+    trip_places: "Bestemmingen (komma-gescheiden)"
+    verify: "Verificatie"
+    verify_mode: "Modus"
+    ap: "Access Point"
+    ap_ssid: "SSID"
+    ap_password: "Wachtwoord"
+    web: "Web"
+    web_page_size: "Paginagrootte"
+    proxies: "Proxies"
+    proxies_max_cache: "Max. cache (GB)"
+    language: "Taal"
+    save: "Opslaan"
+
+settings:
+  title: "Instellingen"
+  items:
+    verification: "Verificatie:"
+    power_off: "Uit-modus:"
+    proxies: "Proxies:"
+    tone: "Geluid:"
+    network: "Netwerk:"
+    language: "Taal:"
+  values:
+    fast: "Snel"
+    sha256: "SHA256"
+    on: "Aan"
+    off: "Uit"
+    ap: "AP"
+    wifi: "WiFi"
+    lang_en: "Engels"
+    lang_nl: "Nederlands"
+  power_values:
+    info: "Info"
+    trip: "Reis"
+    clear: "Blanco"
+  save_confirm_title: "Instellingen"
+  save_confirm_question: "Instellingen opslaan?"
+  back_to_settings: "terug naar instellingen"
+
+device:
+  detected_title: "Nieuw apparaat gedetecteerd"
+  start_backup_button: "1: Back-up starten"
+  dismiss_button: "4: Negeren"
+  removed_title: "Apparaat verwijderd"
+  gopro_connected_title: "GoPro verbonden"
+  gopro_start_button: "1: GoPro importeren"
+
+errors:
+  insert_sd: "Plaats een SD-kaart om door te gaan"
+  two_cards: "2 kaarten gedetecteerd! Verwijder er één"
+  low_power_wait: "Lage spanning. Wachten..."
+  verify_failed: "Verificatie mislukt"
+  gopro_connect_failed: "Kan geen verbinding maken met GoPro"
+  gopro_import_failed: "GoPro-import mislukt"
+  gopro_no_media: "Geen media gevonden op GoPro"
+
+power:
+  power_off_label: "Power-Off"
+  date_range: "{begin} tot {end}"
+
+boot:
+  booting: "Blackbox starten..."

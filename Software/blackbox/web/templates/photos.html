@@ -1,6 +1,17 @@
 {% extends 'base.html' %}
 {% block content %}
-  <h2 class="page-title">Photos</h2>
+  <h2 class="page-title">{{ t('web.photos.title') }}</h2>
+  <form class="form" method="post" action="/upload" enctype="multipart/form-data">
+    <fieldset>
+      <label>
+        <span>{{ t('web.photos.upload_label') }}</span>
+        <input type="file" name="files" accept="image/*,image/heif,image/heic,.heic,.heif,.jpg,.jpeg,.png" multiple onchange="this.form.submit()"/>
+      </label>
+      <div class="form-actions">
+        <button class="btn" type="submit">{{ t('web.photos.upload_button') }}</button>
+      </div>
+    </fieldset>
+  </form>
   <div class="grid">
     {% for i in items %}
       <div class="card">
@@ -8,16 +19,16 @@
           <img loading="lazy" src="/preview/photo?p={{ i }}" alt="photo" />
         </a>
         <div class="card-actions">
-          <form method="post" action="/delete" onsubmit="return confirm('Delete this file?');">
+          <form method="post" action="/delete" onsubmit="return confirm('{{ t('web.photos.delete_confirm') }}');">
             <input type="hidden" name="p" value="{{ i }}" />
-            <button class="btn danger" type="submit">Delete</button>
+            <button class="btn danger" type="submit">{{ t('web.photos.delete_button') }}</button>
           </form>
         </div>
       </div>
     {% endfor %}
   </div>
   <div class="pager">
-    <a class="btn" href="/photos?page={{ 1 if page<=1 else (page-1) }}">Prev</a>
-    <a class="btn" href="/photos?page={{ page+1 }}">Next</a>
+    <a class="btn" href="/photos?page={{ 1 if page<=1 else (page-1) }}">{{ t('web.pager.prev') }}</a>
+    <a class="btn" href="/photos?page={{ page+1 }}">{{ t('web.pager.next') }}</a>
   </div>
 {% endblock %}

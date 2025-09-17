@@ -1,28 +1,239 @@
 {% extends 'base.html' %}
 {% block content %}
-  <h2 class="page-title">Videos</h2>
-  <div class="grid">
-    {% for i in items %}
-      <div class="card">
-        <a class="thumb" href="/preview/video?p={{ i }}" title="Open video">
-          <div class="video-thumb">
-            <!-- Using the video as a posterless element to get first frame on many browsers -->
-            <video preload="metadata" muted playsinline src="/preview/video?p={{ i }}"></video>
-            <span class="play-badge" aria-hidden="true">▶</span>
-          </div>
-        </a>
-        <div class="card-actions">
-          <a class="btn" href="/download?p={{ i }}">Download</a>
-          <form method="post" action="/delete" onsubmit="return confirm('Delete this file?');">
-            <input type="hidden" name="p" value="{{ i }}" />
-            <button class="btn danger" type="submit">Delete</button>
-          </form>
-        </div>
+  <h2 class="page-title">{{ t('web.videos.title') }}</h2>
+
+  <form class="media-toolbar" method="get" action="{{ url_for('videos') }}">
+    <label class="media-field">
+      <span>{{ t('web.videos.search_label') }}</span>
+      <input type="search" name="q" value="{{ query }}" placeholder="{{ t('web.videos.search_placeholder') }}" />
+    </label>
+    {% if suggestions %}
+      <div class="media-suggestions" data-role="suggestions">
+        <span class="suggestions-label">{{ t('web.videos.suggestions_label') }}</span>
+        {% for suggestion in suggestions %}
+          <button type="button" class="suggestion-chip" data-suggestion="{{ suggestion.query }}">{{ suggestion.label }}</button>
+        {% endfor %}
       </div>
-    {% endfor %}
-  </div>
+    {% endif %}
+    <div class="filter-actions">
+      <button class="btn outline" type="submit">{{ t('web.videos.search_button') }}</button>
+      {% if query %}
+        <a class="btn" href="{{ url_for('videos') }}">{{ t('web.videos.clear_filters') }}</a>
+      {% endif %}
+    </div>
+  </form>
+
+  <section class="upload-panel" data-role="video-upload">
+    <div class="upload-dropzone" data-dropzone>
+      <div class="upload-copy">
+        <h3>{{ t('web.videos.upload_title') }}</h3>
+        <p>{{ t('web.videos.upload_hint') }}</p>
+      </div>
+      <div class="upload-actions">
+        <button class="btn" type="button" data-action="choose">{{ t('web.videos.upload_button') }}</button>
+        <input type="file" accept=".mp4,.mov,.m4v,video/*" multiple hidden data-role="file-input" />
+      </div>
+    </div>
+    <div class="upload-list" data-role="uploads" hidden></div>
+  </section>
+
+  {% if items %}
+    <div class="media-status">
+      <span>{{ t('web.videos.showing_count', count=items|length, total=total) }}</span>
+      {% if query %}
+        <span class="media-status-filter">{{ t('web.videos.active_filter', query=query) }}</span>
+      {% endif %}
+    </div>
+  {% endif %}
+
+  {% if not items %}
+    <p class="empty-state">{{ query and t('web.videos.no_results') or t('web.videos.empty') }}</p>
+  {% else %}
+    <div class="grid videos-grid">
+      {% for item in items %}
+        <div class="card video-card" data-has-gps="{{ 1 if item.has_gps else 0 }}">
+          <a class="thumb" href="/preview/video?p={{ item.path }}" title="{{ t('web.videos.open_video') }}">
+            <div class="video-thumb">
+              <img
+                src="{{ url_for('preview_video_thumb', p=item.path) }}"
+                alt="{{ item.filename or item.path }}"
+                loading="lazy"
+                decoding="async"
+                onerror="if(!this.dataset.fallback){this.dataset.fallback=1;this.src='{{ url_for('static', filename='placeholder_photo.svg') }}';}"
+              />
+              <span class="play-badge" aria-hidden="true">▶</span>
+            </div>
+          </a>
+          <div class="video-info">
+            <div class="video-title">{{ item.filename or item.path }}</div>
+            {% if item.location_label %}
+              <div class="video-location">{{ item.location_label }}</div>
+            {% else %}
+              <div class="video-location unknown">{{ t('web.videos.location_unknown') }}</div>
+            {% endif %}
+            {% if item.captured_at_display %}
+              <div class="video-date">{{ item.captured_at_display }}</div>
+            {% endif %}
+            {% if item.folder %}
+              <div class="video-folder">{{ item.folder }}</div>
+            {% endif %}
+          </div>
+          <div class="card-actions">
+            <a class="btn" href="/download?p={{ item.path }}">{{ t('web.videos.download_button') }}</a>
+            <form method="post" action="/delete" onsubmit="return confirm('{{ t('web.photos.delete_confirm') }}');">
+              <input type="hidden" name="p" value="{{ item.path }}" />
+              <button class="btn danger" type="submit">{{ t('web.photos.delete_button') }}</button>
+            </form>
+          </div>
+        </div>
+      {% endfor %}
+    </div>
+  {% endif %}
+
   <div class="pager">
-    <a class="btn" href="/videos?page={{ 1 if page<=1 else (page-1) }}">Prev</a>
-    <a class="btn" href="/videos?page={{ page+1 }}">Next</a>
+    <span class="pager-info">{{ t('web.videos.page_of', page=page, pages=page_count) }}</span>
+    <a class="btn{% if not has_prev %} disabled{% endif %}" href="{{ url_for('videos', page=1 if page <= 1 else page-1, q=query or None) }}" aria-disabled="{{ 'true' if not has_prev else 'false' }}">{{ t('web.pager.prev') }}</a>
+    <a class="btn{% if not has_next %} disabled{% endif %}" href="{{ url_for('videos', page=page+1 if has_next else page, q=query or None) }}" aria-disabled="{{ 'true' if not has_next else 'false' }}">{{ t('web.pager.next') }}</a>
   </div>
+  {% if suggestions %}
+    <script>
+      document.addEventListener('DOMContentLoaded', function () {
+        var form = document.querySelector('.media-toolbar');
+        if (!form) return;
+        var input = form.querySelector('input[name="q"]');
+        if (!input) return;
+        var buttons = form.querySelectorAll('[data-suggestion]');
+        buttons.forEach(function (btn) {
+          btn.addEventListener('click', function (event) {
+            event.preventDefault();
+            input.value = btn.dataset.suggestion || '';
+            form.submit();
+          });
+        });
+      });
+    </script>
+  {% endif %}
+  <script>
+    document.addEventListener('DOMContentLoaded', function () {
+      var panel = document.querySelector('[data-role="video-upload"]');
+      if (!panel) return;
+      var input = panel.querySelector('[data-role="file-input"]');
+      var dropzone = panel.querySelector('[data-dropzone]');
+      var chooseBtn = panel.querySelector('[data-action="choose"]');
+      var list = panel.querySelector('[data-role="uploads"]');
+      if (!input || !dropzone || !chooseBtn || !list) return;
+
+      function ensureListVisible() {
+        if (list.hasAttribute('hidden')) {
+          list.removeAttribute('hidden');
+        }
+      }
+
+      function renderStatus(el, text, state) {
+        el.dataset.state = state || '';
+        var statusEl = el.querySelector('.upload-item-status');
+        if (statusEl) statusEl.textContent = text;
+      }
+
+      function updateProgress(el, percent) {
+        var bar = el.querySelector('.upload-progress-inner');
+        if (!bar) return;
+        bar.style.width = Math.min(100, Math.max(0, percent)) + '%';
+      }
+
+      function uploadFile(file) {
+        ensureListVisible();
+        var row = document.createElement('div');
+        row.className = 'upload-item';
+        row.innerHTML = '<div class="upload-item-name"></div>' +
+          '<div class="upload-progress"><div class="upload-progress-inner"></div></div>' +
+          '<div class="upload-item-status"></div>';
+        row.querySelector('.upload-item-name').textContent = file.name;
+        renderStatus(row, "{{ t('web.videos.upload_status_pending') }}", 'pending');
+        list.appendChild(row);
+
+        var formData = new FormData();
+        formData.append('files', file, file.name);
+
+        var xhr = new XMLHttpRequest();
+        xhr.open('POST', '{{ url_for('upload_videos') }}');
+        xhr.responseType = 'json';
+
+        xhr.upload.addEventListener('progress', function (event) {
+          if (event.lengthComputable) {
+            var pct = (event.loaded / Math.max(event.total, 1)) * 100;
+            updateProgress(row, pct);
+            renderStatus(row, "{{ t('web.videos.upload_status_uploading') }}", 'uploading');
+          }
+        });
+
+        xhr.addEventListener('load', function () {
+          var response = xhr.response;
+          if (!response || xhr.status !== 200) {
+            renderStatus(row, "{{ t('web.videos.upload_status_failed') }}", 'error');
+            updateProgress(row, 100);
+            return;
+          }
+          var entry = null;
+          if (response && response.results && response.results.length) {
+            entry = response.results.find(function (r) { return r.filename === file.name; }) || response.results[0];
+          }
+          updateProgress(row, 100);
+          if (entry && entry.status === 'uploaded') {
+            renderStatus(row, "{{ t('web.videos.upload_status_done') }}", 'done');
+          } else if (entry && entry.status === 'skipped') {
+            var reason = entry.reason || 'skipped';
+            var message = reason === 'duplicate' ? "{{ t('web.videos.upload_status_duplicate') }}" : (reason === 'before_trip' ? "{{ t('web.videos.upload_status_before_trip') }}" : "{{ t('web.videos.upload_status_skipped') }}");
+            renderStatus(row, message, 'skipped');
+          } else {
+            renderStatus(row, "{{ t('web.videos.upload_status_failed') }}", 'error');
+          }
+        });
+
+        xhr.addEventListener('error', function () {
+          renderStatus(row, "{{ t('web.videos.upload_status_failed') }}", 'error');
+        });
+
+        xhr.send(formData);
+      }
+
+      function handleFiles(fileList) {
+        Array.prototype.slice.call(fileList || []).forEach(function (file) {
+          uploadFile(file);
+        });
+      }
+
+      chooseBtn.addEventListener('click', function () {
+        input.click();
+      });
+
+      input.addEventListener('change', function () {
+        if (input.files && input.files.length) {
+          handleFiles(input.files);
+          input.value = '';
+        }
+      });
+
+      ['dragenter', 'dragover'].forEach(function (type) {
+        dropzone.addEventListener(type, function (event) {
+          event.preventDefault();
+          dropzone.classList.add('is-dragging');
+        });
+      });
+
+      ['dragleave', 'drop'].forEach(function (type) {
+        dropzone.addEventListener(type, function (event) {
+          event.preventDefault();
+          dropzone.classList.remove('is-dragging');
+        });
+      });
+
+      dropzone.addEventListener('drop', function (event) {
+        var files = event.dataTransfer ? event.dataTransfer.files : null;
+        if (files && files.length) {
+          handleFiles(files);
+        }
+      });
+    });
+  </script>
 {% endblock %}

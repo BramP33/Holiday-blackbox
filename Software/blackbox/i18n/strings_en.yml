@@ -1,11 +1,170 @@
 home:
-  start_backup: "Start back-up"
-  ap_mode: "AP-mode"
-  info: "Info"
-  settings: "Settings"
+  menu:
+    start_backup: "Start back-up"
+    webserver: "Webserver"
+    info: "Info"
+    settings: "Settings"
 
 common:
   yes: "yes"
   no: "no"
   home: "home"
+  error: "Error"
 
+info:
+  title: "Info"
+  trip: "Trip: {name}"
+  trip_unknown: "Trip: -"
+  video: "Video: {duration}"
+  photo: "Photo: {count}"
+  free: "Free: {gb}"
+  devices_title: "Devices"
+  devices_none: "none yet"
+  devices_more: "+{count} more"
+
+backup:
+  title: "Backing up"
+  from: "From: {path}"
+  to: "To:   {path}"
+  eta: "~{minutes} min remaining"
+  free_space: "{gb} free"
+
+verify:
+  title: "Verifying..."
+  method: "Method: {method}"
+
+done:
+  title: "Done!"
+  summary_files: "Backed up {n} files"
+
+proxies:
+  title: "Generating proxies"
+  items_done: "{done}/{total}"
+  building: "Building: {name}"
+
+web:
+  confirm_start_title: "Start Webserver?"
+  no_go_home: "No, go back home"
+  enabled_title: "Webserver enabled"
+  url_label: "Web at:"
+  hint_stop: "3=stop   home"
+  ap_error:
+    start_failed: "Failed to start webserver"
+    nmcli_missing: "NetworkManager (nmcli) missing"
+    ap_password_invalid: "AP password invalid (min. 8 chars)"
+    not_authorized: "Not authorized to manage network"
+  nav:
+    tent: "Tent"
+    photos: "Photos"
+    videos: "Videos"
+    settings: "Settings"
+  home:
+    welcome_title: "Welcome, traveller"
+    welcome_sub: "Browse your photos and videos from your journey."
+    open_photos: "Open Photos"
+    open_videos: "Open Videos"
+    potd: "Photo of the day"
+    camping_fact: "Camping fact of the day"
+    no_photos_alt: "No photos yet"
+  photos:
+    title: "Photos"
+    delete_confirm: "Delete this file?"
+    delete_button: "Delete"
+    upload_label: "Upload photos (JPEG/PNG/HEIF)"
+    upload_button: "Upload"
+  videos:
+    title: "Videos"
+    download_button: "Download"
+    search_label: "Search by place"
+    search_placeholder: "City, country or filename"
+    search_button: "Search"
+    clear_filters: "Clear"
+    suggestions_label: "Suggestions:"
+    showing_count: "Showing {count} of {total}"
+    active_filter: "Filter: \"{query}\""
+    no_results: "No videos matched your search."
+    empty: "No videos yet."
+    location_unknown: "Location unknown"
+    page_of: "Page {page} of {pages}"
+    open_video: "Open video"
+    upload_title: "Upload videos"
+    upload_hint: "Drop iPhone or Android clips here, or use the button to browse."
+    upload_button: "Select videos"
+    upload_status_pending: "Waiting to upload"
+    upload_status_uploading: "Uploading"
+    upload_status_done: "Uploaded"
+    upload_status_failed: "Upload failed"
+    upload_status_duplicate: "Already imported"
+    upload_status_before_trip: "Skipped (before trip start)"
+    upload_status_skipped: "Skipped"
+  pager:
+    prev: "Prev"
+    next: "Next"
+  settings:
+    title: "Settings"
+    trip: "Trip"
+    trip_name: "Name"
+    trip_begin: "Begin (YYYY-MM-DD)"
+    trip_end: "End"
+    trip_places: "Places (comma-separated)"
+    verify: "Verification"
+    verify_mode: "Mode"
+    ap: "Access Point"
+    ap_ssid: "SSID"
+    ap_password: "Password"
+    web: "Web"
+    web_page_size: "Page size"
+    proxies: "Proxies"
+    proxies_max_cache: "Max cache (GB)"
+    language: "Language"
+    save: "Save"
+
+settings:
+  title: "Settings"
+  items:
+    verification: "Verification:"
+    power_off: "Power-off:"
+    proxies: "Proxies:"
+    tone: "Tone:"
+    network: "Network:"
+    language: "Language:"
+  values:
+    fast: "Fast"
+    sha256: "SHA256"
+    on: "On"
+    off: "Off"
+    ap: "AP"
+    wifi: "WiFi"
+    lang_en: "English"
+    lang_nl: "Nederlands"
+  power_values:
+    info: "Info"
+    trip: "Trip"
+    clear: "Clear"
+  save_confirm_title: "Settings"
+  save_confirm_question: "Save settings?"
+  back_to_settings: "back to settings"
+
+device:
+  detected_title: "New device detected"
+  start_backup_button: "1: Start back-up"
+  dismiss_button: "4: Dismiss"
+  removed_title: "Device removed"
+  gopro_connected_title: "GoPro connected"
+  gopro_start_button: "1: Import GoPro"
+
+errors:
+  insert_sd: "Please insert SD card to continue"
+  two_cards: "2 cards detected! Remove one"
+  low_power_wait: "Low power. Waiting..."
+  verify_failed: "Verify failed"
+  gopro_connect_failed: "Cannot connect to GoPro"
+  gopro_import_failed: "GoPro import failed"
+  gopro_no_media: "No media found on GoPro"
+
+power:
+  power_off_label: "Power-Off"
+  date_range: "{begin} to {end}"
+
+boot:
+  booting: "Blackbox booting..."

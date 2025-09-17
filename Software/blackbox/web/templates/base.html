@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="{{ lang }}">
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -12,22 +12,22 @@
         <img class="brand-logo" src="{{ url_for('static', filename='icons/blackbox.svg', v='2') }}" alt="Blackbox" />
         <span>Blackbox</span>
       </div>
-      <nav class="nav">
-        <a class="nav-link{% if request.path=='/' %} active{% endif %}" href="/" aria-label="Tent">
+      <nav class="nav top-nav">
+        <a class="nav-link{% if request.path=='/' %} active{% endif %}" href="/" aria-label="{{ t('web.nav.tent') }}">
           <img class="icon-img" src="{{ url_for('static', filename='icons/tent.svg', v='2') }}" alt="" />
-          <span>Tent</span>
+          <span>{{ t('web.nav.tent') }}</span>
         </a>
-        <a class="nav-link{% if request.path.startswith('/photos') %} active{% endif %}" href="/photos" aria-label="Photos">
+        <a class="nav-link{% if request.path.startswith('/photos') %} active{% endif %}" href="/photos" aria-label="{{ t('web.nav.photos') }}">
           <img class="icon-img" src="{{ url_for('static', filename='icons/photo.svg', v='2') }}" alt="" />
-          <span>Photos</span>
+          <span>{{ t('web.nav.photos') }}</span>
         </a>
-        <a class="nav-link{% if request.path.startswith('/videos') %} active{% endif %}" href="/videos" aria-label="Videos">
+        <a class="nav-link{% if request.path.startswith('/videos') %} active{% endif %}" href="/videos" aria-label="{{ t('web.nav.videos') }}">
           <img class="icon-img" src="{{ url_for('static', filename='icons/video.svg', v='2') }}" alt="" />
-          <span>Videos</span>
+          <span>{{ t('web.nav.videos') }}</span>
         </a>
-        <a class="nav-link{% if request.path.startswith('/settings') %} active{% endif %}" href="/settings" aria-label="Settings">
+        <a class="nav-link{% if request.path.startswith('/settings') %} active{% endif %}" href="/settings" aria-label="{{ t('web.nav.settings') }}">
           <img class="icon-img" src="{{ url_for('static', filename='icons/gear.svg', v='2') }}" alt="" />
-          <span>Settings</span>
+          <span>{{ t('web.nav.settings') }}</span>
         </a>
       </nav>
     </header>
@@ -37,5 +37,24 @@
     <footer class="footer">
       <small>&copy; Blackbox</small>
     </footer>
+    <!-- Bottom nav for small screens -->
+    <nav class="nav bottom-nav" role="navigation" aria-label="Bottom navigation">
+      <a class="nav-link{% if request.path=='/' %} active{% endif %}" href="/" aria-label="{{ t('web.nav.tent') }}">
+        <img class="icon-img" src="{{ url_for('static', filename='icons/tent.svg', v='2') }}" alt="" />
+        <span>{{ t('web.nav.tent') }}</span>
+      </a>
+      <a class="nav-link{% if request.path.startswith('/photos') %} active{% endif %}" href="/photos" aria-label="{{ t('web.nav.photos') }}">
+        <img class="icon-img" src="{{ url_for('static', filename='icons/photo.svg', v='2') }}" alt="" />
+        <span>{{ t('web.nav.photos') }}</span>
+      </a>
+      <a class="nav-link{% if request.path.startswith('/videos') %} active{% endif %}" href="/videos" aria-label="{{ t('web.nav.videos') }}">
+        <img class="icon-img" src="{{ url_for('static', filename='icons/video.svg', v='2') }}" alt="" />
+        <span>{{ t('web.nav.videos') }}</span>
+      </a>
+      <a class="nav-link{% if request.path.startswith('/settings') %} active{% endif %}" href="/settings" aria-label="{{ t('web.nav.settings') }}">
+        <img class="icon-img" src="{{ url_for('static', filename='icons/gear.svg', v='2') }}" alt="" />
+        <span>{{ t('web.nav.settings') }}</span>
+      </a>
+    </nav>
   </body>
 </html>
