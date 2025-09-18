@@ -4,7 +4,7 @@ import psutil
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, Iterator, Mapping, Sequence
+from typing import Iterable, Iterator, Mapping, Optional, Sequence
 
 from .backup.backup import PHOTO_EXTS, VIDEO_EXTS
 from .media.metadata import MediaMetadataIndex, VideoMetadata
@@ -74,6 +74,20 @@ def _collect_video_metadata(
     return list(metas.values())
 
 
+def _device_label_from_meta(meta: VideoMetadata) -> Optional[str]:
+    make = (meta.camera_make or '').strip()
+    model = (meta.camera_model or '').strip()
+    if not make and not model:
+        return None
+    if make and model:
+        lower_model = model.lower()
+        if make.lower() in lower_model:
+            # Model already includes make (e.g., "gopro hero11")
+            return model
+        return f"{make} {model}".strip()
+    return make or model
+
+
 def collect_trip_media_stats(cfg: dict, paths: Paths) -> TripMediaStats:
     trip_cfg = (cfg.get('trip') or {})
     trip_name = str(trip_cfg.get('name') or '').strip()
@@ -82,20 +96,31 @@ def collect_trip_media_stats(cfg: dict, paths: Paths) -> TripMediaStats:
     metadata_index = MediaMetadataIndex(paths)
 
     video_map: dict[Path, str] = {}
-    device_names: set[str] = set()
+    video_fallbacks: dict[str, str] = {}
     for path, parts in _iter_media(trip_root, VIDEO_EXTS):
         rel = '/'.join(parts)
         video_map[path] = rel
         if len(parts) >= 2 and _DATE_FOLDER_RE.match(parts[0]):
             device_label = parts[1].strip()
             if device_label:
-                device_names.add(device_label)
+                video_fallbacks[rel] = device_label
 
     video_metas = _collect_video_metadata(metadata_index, video_map)
     total_seconds = 0.0
+    device_names: set[str] = set()
     for meta in video_metas:
         if meta.duration_sec is not None and meta.duration_sec > 0:
             total_seconds += meta.duration_sec
+        label = _device_label_from_meta(meta)
+        if label:
+            device_names.add(label)
+        else:
+            fallback = video_fallbacks.get(meta.path)
+            if fallback:
+                device_names.add(fallback)
+
+    if not device_names:
+        device_names.update(video_fallbacks.values())
 
     photos_dir = trip_root / 'photos'
     photo_count = 0

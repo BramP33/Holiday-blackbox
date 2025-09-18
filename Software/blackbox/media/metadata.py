@@ -181,6 +181,8 @@ class VideoMetadata:
     country_code: Optional[str]
     has_gps: bool
     duration_sec: Optional[float]
+    camera_make: Optional[str]
+    camera_model: Optional[str]
 
 
 @dataclass
@@ -230,6 +232,8 @@ class MediaMetadataIndex:
             ' admin TEXT,'
             ' country_code TEXT,'
             ' duration_sec REAL,'
+            ' camera_make TEXT,'
+            ' camera_model TEXT,'
             ' has_gps INTEGER NOT NULL DEFAULT 0'
             ')'  # noqa: E122
         )
@@ -239,8 +243,16 @@ class MediaMetadataIndex:
 
         # Backfill missing columns for older schemas
         cols = {row['name'] for row in cur.execute('PRAGMA table_info(videos)')}
+        migrations = []
         if 'duration_sec' not in cols:
-            cur.execute('ALTER TABLE videos ADD COLUMN duration_sec REAL')
+            migrations.append('ALTER TABLE videos ADD COLUMN duration_sec REAL')
+        if 'camera_make' not in cols:
+            migrations.append('ALTER TABLE videos ADD COLUMN camera_make TEXT')
+        if 'camera_model' not in cols:
+            migrations.append('ALTER TABLE videos ADD COLUMN camera_model TEXT')
+        for statement in migrations:
+            cur.execute(statement)
+        if migrations:
             conn.commit()
 
     # -- metadata extraction ----------------------------------------------
@@ -258,6 +270,34 @@ class MediaMetadataIndex:
                     duration_sec = float(raw_duration)
                 except (TypeError, ValueError):
                     duration_sec = _as_float(str(raw_duration))
+
+        def _pick(*keys: str) -> Optional[str]:
+            for key in keys:
+                if key in tags and tags[key]:
+                    value = str(tags[key]).strip().strip('\0')
+                    if value:
+                        return value
+            return None
+
+        camera_make = _pick(
+            'com.apple.quicktime.make',
+            'make',
+            'camera_make',
+            'com.apple.quicktime.camera.make',
+            'com.apple.quicktime.manufacturer',
+            'com.android.manufacturer',
+            'manufacturer',
+        )
+        camera_model = _pick(
+            'com.apple.quicktime.model',
+            'model',
+            'camera_model',
+            'com.apple.quicktime.camera.model',
+            'com.apple.quicktime.device.model',
+            'device_model',
+            'com.android.model',
+            'android_model',
+        )
 
         lat = lon = alt = None
         for key in (
@@ -317,6 +357,8 @@ class MediaMetadataIndex:
             country_code=country_code,
             has_gps=has_gps,
             duration_sec=duration_sec,
+            camera_make=camera_make,
+            camera_model=camera_model,
         )
 
     def _resolve_location(self, lat: float, lon: float) -> Optional[GeoResult]:
@@ -395,13 +437,15 @@ class MediaMetadataIndex:
             country_code=row['country_code'],
             has_gps=bool(row['has_gps']),
             duration_sec=row['duration_sec'] if 'duration_sec' in row.keys() else None,
+            camera_make=row['camera_make'] if 'camera_make' in row.keys() else None,
+            camera_model=row['camera_model'] if 'camera_model' in row.keys() else None,
         )
 
     def _upsert(self, meta: VideoMetadata) -> None:
         conn = self._conn_or_open()
         conn.execute(
-            'INSERT INTO videos (path, file_mtime, captured_at, lat, lon, alt, city, admin, country_code, duration_sec, has_gps) '
-            'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) '
+            'INSERT INTO videos (path, file_mtime, captured_at, lat, lon, alt, city, admin, country_code, duration_sec, camera_make, camera_model, has_gps) '
+            'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) '
             'ON CONFLICT(path) DO UPDATE SET '
             ' file_mtime=excluded.file_mtime,'
             ' captured_at=excluded.captured_at,'
@@ -412,6 +456,8 @@ class MediaMetadataIndex:
             ' admin=excluded.admin,'
             ' country_code=excluded.country_code,'
             ' duration_sec=excluded.duration_sec,'
+            ' camera_make=excluded.camera_make,'
+            ' camera_model=excluded.camera_model,'
             ' has_gps=excluded.has_gps',
             (
                 meta.path,
@@ -424,6 +470,8 @@ class MediaMetadataIndex:
                 meta.admin,
                 meta.country_code,
                 meta.duration_sec,
+                meta.camera_make,
+                meta.camera_model,
                 1 if meta.has_gps else 0,
             ),
         )
