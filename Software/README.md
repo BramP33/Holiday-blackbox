@@ -1,66 +1,112 @@
-Holiday Blackbox — Raspberry Pi 5 backup device
+# Holiday Blackbox
 
-This folder contains the software for the e‑paper UI, backup/verify pipeline, proxy generator, AP mode helpers, and a lightweight web UI. It targets a Raspberry Pi 5 with a Waveshare 2.7" mono e‑paper, internal NVMe SSD, and a micro‑SD card reader.
+Holiday Blackbox is a Raspberry Pi 5 field backup appliance for offloading camera media while travelling. It drives a Waveshare 2.7" monochrome e-paper display, verifies every copy, generates lightweight proxies, and exposes an offline-friendly web gallery and JSON API.
 
-Key modules:
-- blackbox/main.py — entrypoint running the UI state machine.
-- blackbox/config.py — load/save YAML config.
-- blackbox/paths.py — resolves storage and cache directories.
-- blackbox/hardware/display.py — e‑paper wrapper (and a PNG mock output for dev).
-- blackbox/hardware/buttons.py — button abstraction (GPIO stubs + keyboard dev mode).
-- blackbox/ui/screens.py — screen rendering according to the mockups.
-- blackbox/backup/backup.py — copy + verify + dedup.
-- blackbox/backup/scanner.py — locate source media with DCIM.
-- blackbox/proxies/generate.py — create 480p H.264 proxies and photo thumbnails.
-- blackbox/web/app.py — Flask web UI to browse and download.
-- ap_mode.py & scripts/start_ap.sh — enable/disable AP using NetworkManager.
+## Highlights
+- Verified ingest from SD cards, USB readers, GoPro Link, and (optionally) iPhone via ifuse.
+- Deduplication with SHA-256 comparison and configurable verification modes (`fast` size check or full hash).
+- Automatic 480p H.264 proxy generation plus photo thumbnails for quick review.
+- Button-driven e-paper UI with a PNG mock display for desktop development.
+- Lightweight Flask web UI (`/photos`, `/videos`, `/`) with pagination and downloads.
+- Optional access-point mode powered by NetworkManager helpers.
 
-Defaults and paths live in `config.default.yml`; user‑specific config is `config.yml` (copied on first run).
+## Hardware Targets
+- Raspberry Pi 5 (Raspberry Pi OS Lite, 64-bit recommended).
+- Waveshare 2.7" V2 e-paper (epd2in7) connected over SPI.
+- Four active-low buttons on GPIO5, GPIO6, GPIO13, GPIO19 (internal pull-ups).
+- NVMe SSD mounted at `/mnt/nvme` (or another path configured in `paths.nvme_mount`).
+- Stable 5V/3A power. Undervoltage triggers a pause screen until power recovers.
 
-Nothing here performs destructive operations by default. Replace logic is restricted to duplicate file handling when the SHA256 differs (as configured).
+## Repository Layout (Software/)
+- `blackbox/main.py` — entry point running the UI state machine and backup flow.
+- `blackbox/config.py` — load/merge default config and persist `config.yml` on first run.
+- `blackbox/paths.py` — resolves storage directories (trips, proxies, photos, videos).
+- `blackbox/backup/backup.py` — copy, dedupe, verify, metadata indexing.
+- `blackbox/backup/scanner.py` — detect mounted sources and infer device labels.
+- `blackbox/proxies/generate.py` — ffmpeg-based proxy builder with cache limits.
+- `blackbox/ui/screens.py` — renders e-paper frames according to mockups.
+- `blackbox/hardware/` — display abstraction, button handling, undervoltage checks, USB monitor.
+- `blackbox/web/app.py` — Flask app serving HTML galleries and JSON endpoints.
+- `blackbox/iphone/importer.py` — ifuse-based importer for iPhone DCIM/videos.
+- `scripts/` — install/update helpers, AP toggles, maintenance utilities.
+- `systemd/` — unit templates for the UI, web app, and shutdown screen.
 
-Storage layout (per requirements):
-- trips/<TripName>/photos — all photos (any camera) in one folder.
-- trips/<TripName>/<YYYY-MM-DD>/<device>/ — videos grouped by date and detected device name (`gopro`, `drone`, `360`, `camera`).
-- proxies/ — generated 480p H.264 video proxies and photo thumbnails (max total size capped by config).
+## Getting Started on Raspberry Pi
+For the full walkthrough (booting from NVMe, wiring, OS packages), follow [`INSTALL.md`](INSTALL.md).
 
-Deduplication:
-- If a destination filename exists: compute SHA256 on both source and destination. If equal → skip; if different → replace destination with source copy. After each copy, verify using `verify.default_mode` (`fast`=size match, or `sha256`).
+Quick recap once Raspberry Pi OS Lite is running and the repo is in `~/Holiday-blackbox`:
 
-AP mode:
-- Not auto‑enabled. Users start it from the UI. Scripts rely on NetworkManager (`nmcli`) and broadcast SSID/password from config.
+```bash
+cd ~/Holiday-blackbox/Software
+chmod +x scripts/*.sh
+./scripts/install.sh
+# The installer creates .venv, installs Python deps, copies systemd units,
+# and prints the `sudo systemctl enable --now ...` command to run next.
+```
 
-Multiple sources:
-- If more than one mounted source with a `DCIM` folder is detected, the UI shows an error: "2 cards detected! Remove one to continue." (manual backup only).
+On first launch the app writes `config.yml` beside `config.default.yml`. Edit it to set trip dates, AP credentials, preferred language, proxy limits, and mount paths. Restart with `sudo systemctl restart blackbox blackbox-web` after changes.
 
-Device labels:
-- Device classification uses simple heuristics (gopro/drone/360/lumix_g7/camera). Folder labels are configurable via `device_labels` in `config.yml` (defaults: Gopro, Drone, 360, Lumix G7, Camera).
+## Development on a Laptop/Desktop
+The display layer automatically falls back to the PNG mock display, so you can run the UI without hardware:
 
-Web API pagination:
-- `/photos` and `/videos` return JSON with `page`, `page_size`, `total`, and `items`. Page size is configurable (`web.page_size`, default 50).
+```bash
+cd /path/to/Holiday-blackbox/Software
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+python -m blackbox.main          # renders frames into Software/run_output/
+python -m blackbox.web.app       # serves the Flask app on http://127.0.0.1:8080
+```
 
-Hardware
-- E‑paper: Waveshare 2.7" v2 (`epd2in7_V2`). If the Waveshare Python libs are installed (`waveshare_epd`), the app will use the real display; otherwise it renders frames to `run_output/` as PNG for development.
-- Buttons: 4 side buttons with internal pull‑ups, active‑low (BCM): top→bottom `[5, 6, 13, 19]`. You can change in `hardware.buttons`.
-- Power: undervoltage detection via `vcgencmd get_throttled`; backup pauses and the UI shows an error until power is stable.
+Set `BLACKBOX_PARTIAL=1` if you want to exercise partial refresh support with real hardware. Use `scripts/update.sh` to pull new code, update dependencies, and restart systemd units on the Pi.
 
-Web UI
-- `/photos` and `/videos` also serve simple paginated HTML galleries (50 per page by default) that display photo thumbnails and play 480p H.264 video proxies with a download link for the original.
+## Configuration & Storage Layout
+- Defaults live in `config.default.yml`; user overrides are written to `config.yml` on first run.
+- Primary storage is rooted at `paths.nvme_mount` (default `/mnt/nvme`). The app creates a `Blackbox/` folder containing `trips/`, `proxies/`, and metadata caches.
+- Trip media layout:
+  - `trips/<TripName>/photos/` — all photos in one folder.
+  - `trips/<TripName>/<YYYY-MM-DD>/<device>/` — videos grouped by capture date and detected device (gopro, drone, 360, lumix_g7, camera, etc.).
+  - `proxies/` — capped by `previews.max_cache_gb`; contains 480p H.264 proxies and JPEG thumbnails.
+- Device labels are configurable via `device_labels` and appear in both the UI and folder names.
+- Backup stops early if free space would drop below `limits.min_free_gb`.
 
-**NVMe Boot (Recommended for Performance)**
-- Goal: Boot Raspberry Pi OS Lite directly from the NVMe SSD so the system is fast and reliable. You can still use the same NVMe for storing backups.
-- What you need: a USB–NVMe adapter or enclosure to connect the SSD to your computer while flashing.
-- Steps:
-  1) On your computer install Raspberry Pi Imager. Insert the NVMe via USB adapter.
-  2) In Imager: choose OS → Raspberry Pi OS Lite (64‑bit). Choose Storage → your NVMe drive.
-  3) Click the gear icon (Advanced): set hostname (e.g., `blackbox`), enable SSH, set username/password, configure Wi‑Fi (if needed), set locale/timezone. Save and Write.
-  4) Move the NVMe into the Pi 5’s M.2 adapter. Remove any microSD card. Power on the Pi.
-  5) If it doesn’t boot: update the bootloader and set boot order to NVMe/USB first:
-     - `sudo apt update && sudo apt full-upgrade -y`
-     - `sudo rpi-eeprom-update -a` then `sudo reboot`
-     - `sudo raspi-config` → Advanced Options → Boot Order → NVMe/USB first.
-  6) Confirm you’re booted from NVMe: `lsblk` should show `/` on `nvme0n1p2` (or similar).
-- Data folder for backups: create a writable folder on the NVMe and point the app to it.
-  - `sudo mkdir -p /mnt/nvme && sudo chown -R $USER:$USER /mnt/nvme`
-  - Edit `Software/config.yml` → `paths.nvme_mount: /mnt/nvme` (the app stores everything in `/mnt/nvme/Blackbox`).
-  - Alternatively, create a dedicated data partition and mount it at `/mnt/nvme` (advanced; optional).
+## Backup and Verification Flow
+1. Detects a single mounted source containing `DCIM` (or the raw mount if DCIM absent). Multiple sources raise an error prompt on the UI.
+2. Copies media files, deduping by hash when a filename already exists on the destination.
+3. Verifies each copy using the configured mode (`fast` size or `sha256`). Failures retrigger a copy once before reporting an error.
+4. Video imports update the metadata index to power duration stats and the web gallery.
+5. On low voltage the UI warns and pauses until power is stable.
+
+## Web UI & JSON API
+- Serves from `0.0.0.0:<port>` (default 8080).
+- Endpoints:
+  - `/` — landing page with latest photo preview and camping fact of the day.
+  - `/photos` and `/videos` — HTML galleries (default 50 items per page) with download links.
+  - `/api/photos` and `/api/videos` — paginated JSON (`page`, `page_size`, `total`, `items`).
+  - `/preview/<path>` and `/download/<path>` — serve proxies and originals.
+- Language strings come from `blackbox/i18n/strings_*.yml`; set `language` in config to switch.
+
+## iPhone Importer
+`blackbox.iphone.importer` mounts an iPhone using `ifuse` (libimobiledevice) and copies only video files into the trip folder. Requirements on the Pi:
+- `ifuse`, `libimobiledevice`, and FUSE (`libfuse` and `fusermount3`).
+- Trusted device pairing (`idevicepair pair`). The importer retries pairing prompts when possible.
+- Run the importer from custom tooling by calling `import_videos_from_iphone(Paths(cfg), verify_mode=...)`.
+
+## Access Point Helpers
+- `ap_mode.py` toggles AP mode from the UI. Ensure NetworkManager is installed and Wi-Fi credentials are set in `config.yml`.
+- `scripts/start_ap.sh` / `scripts/stop_ap.sh` expose manual `nmcli` helpers.
+
+## Maintenance Scripts & Services
+- `scripts/install.sh` — prepares `.venv`, installs Python deps, copies systemd unit files, and hints at enabling them.
+- `scripts/update.sh` — git pull + pip install + service restart (used by `deploy.sh`).
+- `scripts/list_devices.py` — prints per-trip stats for debugging.
+- `systemd/blackbox.service` — runs the UI (`python -m blackbox.main`).
+- `systemd/blackbox-web.service` — runs the Flask app (`python -m blackbox.web.app`).
+- `systemd/blackbox-poweroff.service` — renders a power-off frame when the OS shuts down.
+
+## Additional Documentation
+- [`INSTALL.md`](INSTALL.md) — full Pi provisioning, wiring, and troubleshooting guide.
+- [`LICENSE`](../LICENSE) — project licensing.
+- `deploy.sh` — rsync-based helper to push updates from a development machine.
+
+Contributions, bug reports, and hardware notes are welcome. Open an issue or submit a pull request if you discover gaps in the docs or want to share improvements.
