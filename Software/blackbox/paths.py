@@ -29,6 +29,11 @@ class Paths:
         p.mkdir(parents=True, exist_ok=True)
         return p
 
+    def trash_dir(self) -> Path:
+        p = self.trip_root() / '.trash'
+        p.mkdir(parents=True, exist_ok=True)
+        return p
+
     def videos_dir(self, date_str: str, device_label: str) -> Path:
         p = self.trip_root() / date_str / device_label
         p.mkdir(parents=True, exist_ok=True)

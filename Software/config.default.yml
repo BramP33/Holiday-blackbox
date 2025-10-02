@@ -28,6 +28,28 @@ previews:
 limits:
   min_free_gb: 10
 
+transcription:
+  enabled: true
+  start_time: "22:00"
+  end_time: "07:00"
+  poll_seconds: 60
+  whisper:
+    model: tiny.en
+    compute_type: int8
+    device: cpu
+    beam_size: 5
+    temperature: 0.0
+    vad_filter: false
+  keywords:
+    method: frequency   # 'frequency' or 'sentence-transformer'
+    top_k: 12
+    max_candidates: 256
+  semantic:
+    enabled: true
+    model: sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2
+    device: cpu
+    min_similarity: 0.25
+
 network:
   # 'ap' to create hotspot, 'wifi' to join known WiFi
   mode: ap

@@ -55,9 +55,11 @@ class HomeScreen(ScreenBase):
 
 
 class InfoScreen(ScreenBase):
-    def __init__(self, width: int, height: int, language: str, stats: dict):
+    def __init__(self, width: int, height: int, language: str, stats: dict, *, status: Optional[str] = None, show_index_action: bool = False):
         super().__init__(width, height, language)
         self.stats = stats
+        self.status = status
+        self.show_index_action = show_index_action
 
     def draw(self) -> Image.Image:
         img = Image.new('1', (self.width, self.height), 1)
@@ -107,7 +109,18 @@ class InfoScreen(ScreenBase):
                 d.text((12, y), more_line, font=self.font_small, fill=0)
                 y += line_gap
 
-        d.text((8, self.height-18), tr(self.language, 'common.home'), font=self.font_mid, fill=0)
+        footer_items: List[tuple] = []
+        footer_items.append((self.font_mid, tr(self.language, 'common.home')))
+        if self.show_index_action:
+            footer_items.insert(0, (self.font_small, tr(self.language, 'info.index_hint')))
+        if self.status:
+            footer_items.insert(0, (self.font_small, self.status))
+
+        line_gap_small = 14
+        y_footer = self.height - 18
+        for font, text in reversed(footer_items):
+            d.text((8, y_footer), text, font=font, fill=0)
+            y_footer -= line_gap_small
         return img
 
 

@@ -9,9 +9,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Dict, List, Optional
 
+from ..config import load_config
 from ..paths import Paths
 from ..media.metadata import MediaMetadataIndex
 from ..backup.backup import PHOTO_EXTS, VIDEO_EXTS
+from ..transcription.queue import TranscriptionQueue
 from .http_client import DEFAULT_HOST, GoProHttp
 
 logger = logging.getLogger(__name__)
@@ -41,6 +43,9 @@ def import_media_http(
     host: Optional[str] = None,
 ) -> HttpImportResult:
     errors: List[str] = []
+    cfg = load_config()
+    transcription_cfg = cfg.get('transcription') or {}
+    transcription_queue = TranscriptionQueue(paths) if transcription_cfg.get('enabled', True) else None
     downloaded = skipped = 0
     client = GoProHttp(host or DEFAULT_HOST)
     try:
@@ -49,7 +54,8 @@ def import_media_http(
         logger.error("GoPro media list failed: %s", exc)
         return HttpImportResult(0, 0, [f'media list failed: {exc}'], 0)
 
-    items: List[Dict] = []
+    plan: List[Dict] = []
+    needed_bytes = 0
     for entry in media:
         name = entry.get('filename')
         directory = entry.get('directory') or ''
@@ -58,17 +64,73 @@ def import_media_http(
         ext = Path(name).suffix.lower()
         if ext not in PHOTO_EXTS | VIDEO_EXTS:
             continue
-        # HTTP endpoint expects /videos/DCIM/<dir>/<file>
         remote_rel = f"DCIM/{directory}/{name}"
         size = int(entry.get('size') or 0)
         try:
             ts = float(entry.get('created') or entry.get('mod') or time.time())
         except Exception:
             ts = time.time()
-        items.append({'remote': remote_rel, 'name': name, 'ext': ext, 'size': size, 'ts': ts})
 
-    total = len(items)
+        date_str = time.strftime('%Y-%m-%d', time.localtime(ts))
+        if ext in VIDEO_EXTS:
+            dest_dir = paths.videos_dir(date_str, 'gopro')
+            dest = dest_dir / name
+        else:
+            dest_dir = paths.photos_dir()
+            dest = _unique_destination(dest_dir, name)
+
+        skip = False
+        if ext in VIDEO_EXTS and size:
+            try:
+                if dest.exists() and dest.stat().st_size == size:
+                    skip = True
+            except (FileNotFoundError, OSError):
+                skip = False
+
+        if not skip and size:
+            needed_bytes += size
+
+        plan.append({
+            'remote': remote_rel,
+            'name': name,
+            'ext': ext,
+            'size': size,
+            'ts': ts,
+            'dest': dest,
+            'skip': skip,
+        })
+
+    total = len(plan)
     logger.info("GoPro media items available: %d", total)
+
+    if plan and needed_bytes:
+        usage = shutil.disk_usage(str(paths.nvme_mount))
+        usable_free = max(usage.free - min_free_bytes, 0)
+        if needed_bytes > usable_free:
+            errors.append(f'low_space:{needed_bytes}:{usable_free}:{min_free_bytes}')
+            logger.warning(
+                "Insufficient space for GoPro import: need %d bytes, usable %d bytes (reserve %d)",
+                needed_bytes,
+                usable_free,
+                min_free_bytes,
+            )
+            return HttpImportResult(0, 0, errors, total)
+
+    total_bytes = sum(it['size'] for it in plan if not it['skip'] and it['size'] > 0)
+    total_items_for_fraction = total if total else 1
+    processed_bytes = 0
+    processed_items = 0
+
+    def _emit_progress(idx: int, name: str, *, done_bytes: int = 0, partial: float = 0.0) -> None:
+        if not progress_cb:
+            return
+        clamped_partial = min(max(partial, 0.0), 1.0)
+        if total_bytes > 0:
+            numerator = processed_bytes + max(done_bytes, 0)
+            fraction = min(max(numerator / total_bytes, 0.0), 1.0)
+        else:
+            fraction = min(max((processed_items + clamped_partial) / total_items_for_fraction, 0.0), 1.0)
+        progress_cb(idx, total, fraction, name)
 
     keep_alive = _KeepAlive(client)
     if total:
@@ -77,30 +139,34 @@ def import_media_http(
         except Exception as exc:
             logger.debug("claim_control threw: %s", exc)
         keep_alive.start()
-    for idx, it in enumerate(items, start=1):
+    for idx, it in enumerate(plan, start=1):
         remote_rel = it['remote']
         name = it['name']
         ext = it['ext']
         size = it['size']
         ts = it['ts']
+        dest = Path(it['dest'])
+        skip = it['skip']
 
         logger.info("[%d/%d] downloading %s (%s)", idx, total, name, remote_rel)
 
-        date_str = time.strftime('%Y-%m-%d', time.localtime(ts))
-        dest_dir = paths.videos_dir(date_str, 'gopro') if ext in VIDEO_EXTS else paths.photos_dir()
-        dest_dir.mkdir(parents=True, exist_ok=True)
-        dest = dest_dir / name
-        if ext in PHOTO_EXTS:
-            dest = _unique_destination(dest_dir, name)
-        if dest.exists() and size and dest.stat().st_size == size:
+        if skip:
             skipped += 1
-            if progress_cb:
-                progress_cb(idx, total, idx/total if total else 1.0, name)
+            if size > 0:
+                processed_bytes += size
+            processed_items += 1
+            if metadata_index and ext in VIDEO_EXTS:
+                try:
+                    metadata_index.ensure_for_path(dest)
+                except Exception as exc:
+                    logger.debug("metadata index refresh failed for %s: %s", dest, exc)
+            _emit_progress(idx, name)
             continue
 
         usage = shutil.disk_usage(str(paths.nvme_mount))
         if size and (usage.free - size) < min_free_bytes:
             errors.append('Low space: stopping import')
+            logger.warning("Aborting GoPro import due to low space before %s", name)
             break
 
         temp = dest.with_suffix(dest.suffix + '.part')
@@ -110,9 +176,19 @@ def import_media_http(
         except Exception:
             pass
 
+        base_bytes = processed_bytes
+
         def _chunk(done: int, totalb: int):
-            if progress_cb:
-                progress_cb(idx, total, idx/total if total else 1.0, name)
+            done_bytes = 0
+            partial = 0.0
+            if size > 0:
+                done_bytes = min(max(done, 0), size)
+                if size:
+                    partial = done_bytes / size
+            elif totalb > 0:
+                done_bytes = 0
+                partial = min(max(done / totalb, 0.0), 1.0)
+            _emit_progress(idx, name, done_bytes=done_bytes, partial=partial)
 
         try:
             client.download(remote_rel, temp, progress=_chunk)
@@ -135,12 +211,19 @@ def import_media_http(
             errors.append(f'move failed for {dest}: {exc}')
             continue
         downloaded += 1
+        if size > 0:
+            processed_bytes += size
+        processed_items += 1
         try:
             metadata_index.ensure_for_path(dest)
         except Exception as exc:
             logger.debug("metadata index refresh failed for %s: %s", dest, exc)
-        if progress_cb:
-            progress_cb(idx, total, idx/total if total else 1.0, name)
+        if transcription_queue and ext in VIDEO_EXTS:
+            try:
+                transcription_queue.enqueue(dest)
+            except Exception as exc:
+                logger.debug("transcription enqueue failed for %s: %s", dest, exc)
+        _emit_progress(idx, name)
 
     keep_alive.stop()
 

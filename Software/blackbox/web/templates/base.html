@@ -25,6 +25,10 @@
           <img class="icon-img" src="{{ url_for('static', filename='icons/video.svg', v='2') }}" alt="" />
           <span>{{ t('web.nav.videos') }}</span>
         </a>
+        <a class="nav-link{% if request.path.startswith('/trash') %} active{% endif %}" href="/trash" aria-label="{{ t('web.nav.trash') }}">
+          <img class="icon-img" src="{{ url_for('static', filename='icons/trash.svg', v='2') }}" alt="" />
+          <span>{{ t('web.nav.trash') }}</span>
+        </a>
         <a class="nav-link{% if request.path.startswith('/settings') %} active{% endif %}" href="/settings" aria-label="{{ t('web.nav.settings') }}">
           <img class="icon-img" src="{{ url_for('static', filename='icons/gear.svg', v='2') }}" alt="" />
           <span>{{ t('web.nav.settings') }}</span>
@@ -50,6 +54,10 @@
       <a class="nav-link{% if request.path.startswith('/videos') %} active{% endif %}" href="/videos" aria-label="{{ t('web.nav.videos') }}">
         <img class="icon-img" src="{{ url_for('static', filename='icons/video.svg', v='2') }}" alt="" />
         <span>{{ t('web.nav.videos') }}</span>
+      </a>
+      <a class="nav-link{% if request.path.startswith('/trash') %} active{% endif %}" href="/trash" aria-label="{{ t('web.nav.trash') }}">
+        <img class="icon-img" src="{{ url_for('static', filename='icons/trash.svg', v='2') }}" alt="" />
+        <span>{{ t('web.nav.trash') }}</span>
       </a>
       <a class="nav-link{% if request.path.startswith('/settings') %} active{% endif %}" href="/settings" aria-label="{{ t('web.nav.settings') }}">
         <img class="icon-img" src="{{ url_for('static', filename='icons/gear.svg', v='2') }}" alt="" />

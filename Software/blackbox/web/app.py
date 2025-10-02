@@ -2,11 +2,14 @@ from __future__ import annotations
 from flask import Flask, jsonify, send_file, render_template_string, request, render_template, url_for, redirect
 from pathlib import Path
 import datetime as dt
+import io
+import json
 import os
-import tempfile
 import shutil
-import time
+import tempfile
 import threading
+import time
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 from ..config import load_config, save_config
 from ..paths import Paths
@@ -15,6 +18,7 @@ from ..media.metadata import LocationSuggestion, MediaMetadataIndex, VideoMetada
 from ..backup.backup import copy_from_source
 from ..backup.backup import VIDEO_EXTS as BACKUP_VIDEO_EXTS
 from ..proxies.generate import generate_for_folder
+from ..transcription import TranscriptionQueue
 
 
 def create_app() -> Flask:
@@ -22,14 +26,27 @@ def create_app() -> Flask:
     paths = Paths(cfg).ensure()
     app = Flask(__name__)
     metadata_index = MediaMetadataIndex(paths)
+    transcription_queue = TranscriptionQueue(paths)
     proxy_executor = ThreadPoolExecutor(max_workers=1)
     proxy_lock = threading.Lock()
-    incoming_root = (paths.trip_root() / '.incoming')
+    trip_root = paths.trip_root().resolve()
+    incoming_root = trip_root / '.incoming'
     incoming_root.mkdir(parents=True, exist_ok=True)
+    trash_root = paths.trash_dir().resolve()
+    trash_meta_dir = trash_root / '.meta'
+    trash_meta_dir.mkdir(parents=True, exist_ok=True)
 
     def _trip_begin_timestamp(cur_cfg: dict | None = None) -> float | None:
         cfg_local = cur_cfg or load_config()
-        begin = ((cfg_local.get('trip') or {}).get('begin_date') or '').strip()
+        raw_begin = (cfg_local.get('trip') or {}).get('begin_date')
+        if isinstance(raw_begin, dt.datetime):
+            begin = raw_begin.date().isoformat()
+        elif isinstance(raw_begin, dt.date):
+            begin = raw_begin.isoformat()
+        elif isinstance(raw_begin, str):
+            begin = raw_begin.strip()
+        else:
+            begin = ''
         if not begin:
             return None
         try:
@@ -85,6 +102,293 @@ def create_app() -> Flask:
 
         proxy_executor.submit(_run)
 
+    def _resolve_trip_path(rel: str) -> tuple[Path, str]:
+        rel = (rel or '').strip()
+        if not rel:
+            raise ValueError('empty path')
+        candidate = (trip_root / rel).resolve()
+        try:
+            canonical = candidate.relative_to(trip_root).as_posix()
+        except ValueError as exc:
+            raise ValueError('path outside trip root') from exc
+        return candidate, canonical
+
+    def _resolve_trash_path(rel: str) -> Path:
+        rel = (rel or '').strip()
+        if not rel:
+            raise ValueError('empty path')
+        candidate = (trash_root / rel).resolve()
+        try:
+            candidate.relative_to(trash_root)
+        except ValueError as exc:
+            raise ValueError('path outside trash root') from exc
+        return candidate
+
+    def _is_inside_trash(path: Path) -> bool:
+        try:
+            rel = path.relative_to(trip_root)
+        except ValueError:
+            return False
+        return len(rel.parts) > 0 and rel.parts[0] == '.trash'
+
+    def _trash_meta_path(trash_id: str) -> Path:
+        return trash_meta_dir / f'{trash_id}.json'
+
+    def _infer_kind(path: Path) -> str:
+        suffix = path.suffix.lower()
+        if suffix in PHOTO_EXTS:
+            return 'photo'
+        if suffix in VIDEO_EXTS:
+            return 'video'
+        return 'file'
+
+    def _format_size(num: int | None) -> str | None:
+        if num is None:
+            return None
+        units = ['B', 'KB', 'MB', 'GB', 'TB']
+        value = float(num)
+        for unit in units:
+            if value < 1024 or unit == units[-1]:
+                if unit == 'B':
+                    return f'{int(value)} {unit}'
+                return f'{value:.1f} {unit}'
+            value = value / 1024.0
+        return f'{num} B'
+
+    def _cleanup_empty_dirs(start: Path, boundary: Path) -> None:
+        try:
+            boundary_resolved = boundary.resolve()
+        except Exception:
+            return
+        cur = start
+        while True:
+            try:
+                cur_resolved = cur.resolve()
+            except FileNotFoundError:
+                break
+            if cur_resolved == boundary_resolved:
+                break
+            if not cur.exists() or not cur.is_dir():
+                break
+            try:
+                cur.rmdir()
+            except OSError:
+                break
+            cur = cur.parent
+            try:
+                cur.resolve().relative_to(boundary_resolved)
+            except ValueError:
+                break
+
+    def _move_file_to_trash(path: Path, original_rel: str) -> dict:
+        original_rel = Path(original_rel).as_posix()
+        stored_path = trash_root / original_rel
+        original_rel_path = Path(original_rel)
+        counter = 1
+        while stored_path.exists():
+            suffix = original_rel_path.suffix
+            base_name = original_rel_path.stem
+            new_name = f"{base_name}-trash{counter}{suffix}"
+            candidate_rel = original_rel_path.with_name(new_name).as_posix()
+            stored_path = trash_root / candidate_rel
+            counter += 1
+        stored_path.parent.mkdir(parents=True, exist_ok=True)
+        original_parent = path.parent
+        shutil.move(str(path), str(stored_path))
+        trash_id = uuid.uuid4().hex
+        try:
+            size = stored_path.stat().st_size
+        except OSError:
+            size = None
+        meta = {
+            'original_rel': original_rel,
+            'stored_rel': stored_path.relative_to(trash_root).as_posix(),
+            'trashed_at': dt.datetime.utcnow().replace(microsecond=0).isoformat() + 'Z',
+            'size': size,
+            'kind': _infer_kind(stored_path),
+        }
+        _trash_meta_path(trash_id).write_text(json.dumps(meta))
+        _cleanup_empty_dirs(original_parent, trip_root)
+        return {'id': trash_id, **meta}
+
+    def _restore_trash_entry(trash_id: str) -> tuple[bool, str | None]:
+        meta_path = _trash_meta_path(trash_id)
+        if not meta_path.exists():
+            return False, 'not_found'
+        try:
+            data = json.loads(meta_path.read_text())
+        except Exception:
+            data = {}
+        stored_rel = data.get('stored_rel')
+        original_rel = data.get('original_rel') or stored_rel
+        if not stored_rel or not original_rel:
+            return False, 'invalid'
+        try:
+            stored_path = _resolve_trash_path(stored_rel)
+        except Exception:
+            stored_path = None
+        if not stored_path or not stored_path.exists():
+            try:
+                meta_path.unlink()
+            except Exception:
+                pass
+            return False, 'missing'
+        try:
+            dest_path, canonical_rel = _resolve_trip_path(original_rel)
+        except ValueError:
+            return False, 'invalid'
+        dest_path.parent.mkdir(parents=True, exist_ok=True)
+        if dest_path.exists():
+            return False, 'exists'
+        shutil.move(str(stored_path), str(dest_path))
+        _cleanup_empty_dirs(stored_path.parent, trash_root)
+        try:
+            meta_path.unlink()
+        except Exception:
+            pass
+        return True, canonical_rel
+
+    def _delete_trash_entry(trash_id: str) -> bool:
+        meta_path = _trash_meta_path(trash_id)
+        if not meta_path.exists():
+            return False
+        try:
+            data = json.loads(meta_path.read_text())
+        except Exception:
+            data = {}
+        stored_rel = data.get('stored_rel')
+        try:
+            stored_path = _resolve_trash_path(stored_rel)
+        except Exception:
+            stored_path = None
+        if stored_path and stored_path.exists():
+            try:
+                if stored_path.is_file():
+                    stored_path.unlink()
+                else:
+                    shutil.rmtree(stored_path)
+            except Exception:
+                pass
+            _cleanup_empty_dirs(stored_path.parent, trash_root)
+        try:
+            meta_path.unlink()
+        except Exception:
+            return False
+        return True
+
+    def _load_trash_entries() -> list[dict]:
+        entries: list[dict] = []
+        for meta_path in sorted(trash_meta_dir.glob('*.json')):
+            trash_id = meta_path.stem
+            try:
+                data = json.loads(meta_path.read_text())
+            except Exception:
+                continue
+            stored_rel = data.get('stored_rel')
+            original_rel = data.get('original_rel') or stored_rel
+            if not stored_rel:
+                continue
+            try:
+                stored_path = _resolve_trash_path(stored_rel)
+            except Exception:
+                try:
+                    meta_path.unlink()
+                except Exception:
+                    pass
+                continue
+            if not stored_path.exists():
+                try:
+                    meta_path.unlink()
+                except Exception:
+                    pass
+                continue
+            try:
+                size = data.get('size') or stored_path.stat().st_size
+            except OSError:
+                size = data.get('size')
+            entry = {
+                'id': trash_id,
+                'stored_rel': stored_path.relative_to(trash_root).as_posix(),
+                'original_rel': Path(original_rel).as_posix() if original_rel else stored_rel,
+                'trashed_at': data.get('trashed_at'),
+                'kind': data.get('kind') or _infer_kind(stored_path),
+                'size': size,
+                'size_display': _format_size(size),
+                'filename': Path(original_rel or stored_rel).name,
+            }
+            entries.append(entry)
+        entries.sort(key=lambda e: e.get('trashed_at') or '', reverse=True)
+        return entries
+
+    @app.get('/trash')
+    def trash_page():
+        entries = _load_trash_entries()
+        for entry in entries:
+            folder = Path(entry['original_rel']).parent.as_posix()
+            entry['folder'] = folder if folder and folder != '.' else None
+            entry['trashed_at_display'] = _format_timestamp(entry.get('trashed_at'))
+        status = {
+            'restored': request.args.get('restored'),
+            'deleted': request.args.get('deleted'),
+            'error': request.args.get('error'),
+        }
+        if status['error']:
+            cur_cfg = load_config()
+            lang = (cur_cfg.get('language') or 'en').lower()
+            key = f"web.trash.error_{status['error']}"
+            message = tr(lang, key)
+            if message == key:
+                message = tr(lang, 'web.trash.notice_error', code=status['error'])
+            status['error_message'] = message
+        else:
+            status['error_message'] = None
+        return render_template('trash.html', entries=entries, status=status)
+
+    @app.get('/trash/download')
+    def trash_download():
+        trash_id = request.args.get('id')
+        if not trash_id:
+            return 'missing id', 400
+        meta_path = _trash_meta_path(trash_id)
+        if not meta_path.exists():
+            return 'not found', 404
+        try:
+            data = json.loads(meta_path.read_text())
+        except Exception:
+            return 'not found', 404
+        stored_rel = data.get('stored_rel')
+        original_rel = data.get('original_rel') or stored_rel
+        if not stored_rel:
+            return 'not found', 404
+        try:
+            stored_path = _resolve_trash_path(stored_rel)
+        except Exception:
+            return 'not found', 404
+        if not stored_path.exists():
+            return 'not found', 404
+        download_name = Path(original_rel or stored_path.name).name
+        return send_file(stored_path, as_attachment=True, download_name=download_name)
+
+    @app.post('/trash/restore')
+    def trash_restore():
+        trash_id = request.form.get('id')
+        if not trash_id:
+            return 'missing id', 400
+        ok, reason = _restore_trash_entry(trash_id)
+        if ok:
+            return redirect(url_for('trash_page', restored=trash_id))
+        return redirect(url_for('trash_page', error=reason or 'error', target=trash_id))
+
+    @app.post('/trash/purge')
+    def trash_purge():
+        trash_id = request.form.get('id')
+        if not trash_id:
+            return 'missing id', 400
+        ok = _delete_trash_entry(trash_id)
+        if ok:
+            return redirect(url_for('trash_page', deleted=trash_id))
+        return redirect(url_for('trash_page', error='delete_failed', target=trash_id))
+
     @app.context_processor
     def inject_i18n():
         cur_cfg = load_config()
@@ -129,14 +433,47 @@ def create_app() -> Flask:
         return render_template('home.html', potd_url=potd_url, potd_download=potd_download, camping_fact=fact)
 
     def _iter_media(root: Path, suffixes: set[str]):
-        for dp, _, files in os.walk(root):
+        for dp, dirnames, files in os.walk(root):
+            base = Path(dp)
+            if _is_inside_trash(base):
+                dirnames[:] = []
+                continue
+            clean_dirs = []
+            for dirname in dirnames:
+                candidate = base / dirname
+                if not _is_inside_trash(candidate):
+                    clean_dirs.append(dirname)
+            dirnames[:] = clean_dirs
             for fn in files:
-                p = Path(dp) / fn
+                p = base / fn
+                if _is_inside_trash(p):
+                    continue
                 if p.suffix.lower() in suffixes:
                     yield p
 
     PHOTO_EXTS = {'.jpg', '.jpeg', '.png', '.heic', '.heif', '.rw2', '.cr2', '.nef', '.raf', '.dng', '.arw'}
     VIDEO_EXTS = {'.mp4', '.mov', '.m4v'}
+
+    def _attach_transcript_metadata(records: list[dict]) -> None:
+        if not records:
+            return
+        rel_paths = [rec.get('path') for rec in records if rec.get('path')]
+        if not rel_paths:
+            for rec in records:
+                rec['transcript_available'] = False
+                rec['transcript_state'] = None
+                rec['transcript_language'] = None
+            return
+        try:
+            transcript_map = transcription_queue.get_many(rel_paths)
+        except Exception:
+            transcript_map = {}
+        for rec in records:
+            status = transcript_map.get(rec.get('path') or '') or {}
+            transcript_text = status.get('transcript') if isinstance(status, dict) else None
+            rec['transcript_available'] = bool(transcript_text)
+            rec['transcript_state'] = status.get('state') if isinstance(status, dict) else None
+            rec['transcript_language'] = status.get('language') if isinstance(status, dict) else None
 
     def _format_timestamp(ts: str | None) -> str | None:
         if not ts:
@@ -211,6 +548,7 @@ def create_app() -> Flask:
         if q:
             records, total = metadata_index.search(q, page, size)
             payload = [_serialize_meta(meta) for meta in records]
+            _attach_transcript_metadata(payload)
             return jsonify({
                 'page': page,
                 'page_size': size,
@@ -235,6 +573,7 @@ def create_app() -> Flask:
             rel = str(file.relative_to(paths.trip_root()))
             items.append(rel)
             payload.append(_serialize_meta(meta_map.get(rel), rel))
+        _attach_transcript_metadata(payload)
         return jsonify({
             'page': page,
             'page_size': size,
@@ -398,6 +737,8 @@ def create_app() -> Flask:
                 rel = str(file.relative_to(paths.trip_root()))
                 items.append(_serialize_meta(meta_map.get(rel), rel))
 
+        _attach_transcript_metadata(items)
+
         page_count = max(1, (total + size - 1) // size) if total else 1
         has_prev = page > 1
         has_next = page < page_count
@@ -464,6 +805,29 @@ def create_app() -> Flask:
             return 'not found', 404
         return send_file(path, as_attachment=True)
 
+    @app.get('/transcript')
+    def download_transcript():
+        rel = request.args.get('p')
+        if not rel:
+            return 'missing p', 400
+        try:
+            _, canonical = _resolve_trip_path(rel)
+        except ValueError:
+            return 'invalid path', 400
+        try:
+            record = transcription_queue.get(canonical)
+        except Exception:
+            record = None
+        if not record:
+            return 'not found', 404
+        transcript = (record.get('transcript') or '').strip()
+        if not transcript:
+            return 'not found', 404
+        filename = Path(canonical).with_suffix('.txt').name
+        stream = io.BytesIO(transcript.encode('utf-8'))
+        stream.seek(0)
+        return send_file(stream, mimetype='text/plain', as_attachment=True, download_name=filename)
+
     def _render_settings_form(cfg: dict) -> str:
         return render_template('settings.html', cfg=cfg)
 
@@ -504,12 +868,17 @@ def create_app() -> Flask:
         rel = request.form.get('p')
         if not rel:
             return 'missing p', 400
-        path = paths.trip_root() / rel
         try:
-            if path.exists() and path.is_file():
-                path.unlink()
-        except Exception as e:
-            return f'error: {e}', 500
+            path, canonical_rel = _resolve_trip_path(rel)
+        except ValueError:
+            return 'invalid path', 400
+        if not path.exists() or not path.is_file():
+            ref = request.headers.get('Referer')
+            return redirect(ref or url_for('photos'))
+        try:
+            _move_file_to_trash(path, canonical_rel)
+        except Exception as exc:
+            return f'error: {exc}', 500
         # Redirect back to referrer or photos
         ref = request.headers.get('Referer')
         return redirect(ref or url_for('photos'))

@@ -210,4 +210,9 @@ def import_videos_from_iphone(
     finally:
         if not _unmount(mount_point):
             _LOG.warning('iPhone mount %s could not be cleanly unmounted; continued anyway', mount_point)
--
+-88
+
+        try:
+            mount_point.rmdir()
+        except OSError:
+            pass

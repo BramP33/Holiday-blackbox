@@ -10,6 +10,7 @@ from typing import Callable, Iterable, List, Optional, Tuple
 from ..paths import Paths
 from ..config import load_config
 from ..media.metadata import MediaMetadataIndex
+from ..transcription.queue import TranscriptionQueue
 import shutil as _shutil
 from .scanner import classify_device_code
 
@@ -93,6 +94,9 @@ def copy_from_source(
 
     cfg = load_config()
     metadata_index = MediaMetadataIndex(paths)
+    transcription_cfg = cfg.get('transcription') or {}
+    transcription_enabled = bool(transcription_cfg.get('enabled', True))
+    transcription_queue = TranscriptionQueue(paths) if transcription_enabled else None
     min_free = int(cfg.get('limits', {}).get('min_free_gb', 10)) * 1_000_000_000
 
     labels = cfg.get('device_labels', {})
@@ -157,6 +161,11 @@ def copy_from_source(
                     metadata_index.ensure_for_path(dst)
                 except Exception:
                     pass
+                if transcription_queue:
+                    try:
+                        transcription_queue.enqueue(dst)
+                    except Exception:
+                        pass
 
         except Exception as e:  # pragma: no cover
             errors.append(f'Error copying {src}: {e}')

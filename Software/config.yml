@@ -1,0 +1,54 @@
+language: en
+trip:
+  name: My Trip
+  begin_date: 2025-01-01
+  end_date: 2025-12-31
+  places: []
+verify:
+  default_mode: fast
+power_off_screen: trip
+ap:
+  ssid: Blackbox
+  password: vakantie
+  channel: auto
+  region: US
+previews:
+  enabled: true
+  video_height: 480
+  video_bitrate: 1200k
+  max_cache_gb: 50
+limits:
+  min_free_gb: 10
+transcription:
+  whisper:
+    model: small
+network:
+  mode: ap
+web:
+  host: 0.0.0.0
+  port: 8080
+  page_size: 50
+  upload_device_label: Uploads
+  upload_max_mb: 8192
+paths:
+  nvme_mount: /mnt/nvme
+  source_roots:
+  - /media
+  - /run/media
+  - /mnt
+  - /Volumes
+  proxies_subdir: proxies
+device_labels:
+  gopro: Gopro
+  drone: Drone
+  '360': '360'
+  lumix_g7: Lumix G7
+  camera: Camera
+hardware:
+  display: epd2in7_v2
+  orientation: landscape
+  buttons:
+  - 5
+  - 6
+  - 13
+  - 19

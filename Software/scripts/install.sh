@@ -76,8 +76,8 @@ fi
 echo "Upgrading pip/setuptools in venv..."
 "$PY" -m pip install --upgrade pip setuptools wheel
 
-echo "Installing Python deps into venv..."
-"$PY" -m pip install -r "$DIR/requirements.txt"
+echo "Installing Python deps into venv (forcing PyPI for fresh certs)..."
+"$PY" -m pip install --index-url https://pypi.org/simple -r "$DIR/requirements.txt"
 
 # Make sure OS-level dependencies for hardware are present
 if command -v apt-get >/dev/null 2>&1; then
@@ -177,5 +177,9 @@ sed -e "s|%h/Holiday-blackbox/Software|$SED_PATH|g" \
 sed -e "s|%h/Holiday-blackbox/Software|$SED_PATH|g" \
     -e "s|^ExecStart=.*blackbox.web.app|ExecStart=$VENVPY -m blackbox.web.app|" \
     "$DIR/systemd/blackbox-web.service" | sudo tee /etc/systemd/system/blackbox-web.service >/dev/null
+sed -e "s|%h/Holiday-blackbox/Software|$SED_PATH|g" \
+    -e "s|^ExecStart=.*blackbox.poweroff|ExecStart=$VENVPY -m blackbox.poweroff|" \
+    "$DIR/systemd/blackbox-poweroff.service" | sudo tee /etc/systemd/system/blackbox-poweroff.service >/dev/null
 sudo systemctl daemon-reload
 echo "Enable with: sudo systemctl enable --now blackbox.service blackbox-web.service"
+echo "Also enable the shutdown screen: sudo systemctl enable blackbox-poweroff.service"

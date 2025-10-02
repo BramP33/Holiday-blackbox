@@ -1,0 +1,69 @@
+{% extends 'base.html' %}
+{% block content %}
+  <h2 class="page-title">{{ t('web.trash.title') }}</h2>
+
+  {% if status.restored %}
+    <div class="banner ok">{{ t('web.trash.notice_restored') }}</div>
+  {% endif %}
+  {% if status.deleted %}
+    <div class="banner ok">{{ t('web.trash.notice_deleted') }}</div>
+  {% endif %}
+  {% if status.error_message %}
+    <div class="banner error">{{ status.error_message }}</div>
+  {% elif status.error %}
+    <div class="banner error">{{ t('web.trash.notice_error', code=status.error) }}</div>
+  {% endif %}
+
+  {% if entries %}
+    <div class="media-status">
+      <span>{{ t('web.trash.count_label', count=entries|length) }}</span>
+    </div>
+    <div class="grid videos-grid trash-grid">
+      {% for entry in entries %}
+        <div class="card trash-card" data-kind="{{ entry.kind }}">
+          <div class="trash-card-body">
+            <div class="trash-name">{{ entry.filename }}</div>
+            {% if entry.folder %}
+              <div class="trash-folder">{{ entry.folder }}</div>
+            {% endif %}
+            <dl class="trash-meta">
+              <div>
+                <dt>{{ t('web.trash.kind_label') }}</dt>
+                <dd>{{ t('web.trash.kind_' + entry.kind) }}</dd>
+              </div>
+              {% if entry.size_display %}
+                <div>
+                  <dt>{{ t('web.trash.size_label') }}</dt>
+                  <dd>{{ entry.size_display }}</dd>
+                </div>
+              {% endif %}
+              {% if entry.trashed_at_display %}
+                <div>
+                  <dt>{{ t('web.trash.trashed_at_label') }}</dt>
+                  <dd>{{ entry.trashed_at_display }}</dd>
+                </div>
+              {% endif %}
+              <div>
+                <dt>{{ t('web.trash.original_path_label') }}</dt>
+                <dd>{{ entry.original_rel }}</dd>
+              </div>
+            </dl>
+          </div>
+          <div class="card-actions">
+            <a class="btn" href="{{ url_for('trash_download', id=entry.id) }}">{{ t('web.trash.download_button') }}</a>
+            <form method="post" action="{{ url_for('trash_restore') }}">
+              <input type="hidden" name="id" value="{{ entry.id }}" />
+              <button class="btn" type="submit">{{ t('web.trash.restore_button') }}</button>
+            </form>
+            <form method="post" action="{{ url_for('trash_purge') }}" onsubmit="return confirm('{{ t('web.trash.delete_confirm') }}');">
+              <input type="hidden" name="id" value="{{ entry.id }}" />
+              <button class="btn danger" type="submit">{{ t('web.trash.delete_button') }}</button>
+            </form>
+          </div>
+        </div>
+      {% endfor %}
+    </div>
+  {% else %}
+    <p class="empty-state">{{ t('web.trash.empty') }}</p>
+  {% endif %}
+{% endblock %}

@@ -1,5 +1,7 @@
 from __future__ import annotations
 from pathlib import Path
+from typing import Optional
+import threading
 import time
 import psutil
 from PIL import ImageChops
@@ -20,7 +22,10 @@ from .media.metadata import MediaMetadataIndex
 from .gopro.network import gopro_present
 from .gopro.link import prepare_link, teardown_link
 from .gopro.http_importer import import_media_http
+from .gopro.mtp_importer import import_media_mtp
 from .stats import collect_trip_media_stats
+from .transcription.queue import TranscriptionQueue
+from .transcription.worker import TranscriptionWorker, MissingDependencyError
 
 
 def bytes_to_gb(n: int) -> str:
@@ -44,7 +49,17 @@ def render_and_push(disp, screen):
 
     allow_partial = current_type in partial_whitelist and last_type is current_type
 
+    home_should_partial = False
+    if current_type is HomeScreen:
+        home_should_partial = getattr(render_and_push, '_home_should_partial_next', False)
+        if last_type is not current_type:
+            home_should_partial = False
+
     supports_partial = allow_partial and hasattr(disp, 'supports_partial') and disp.supports_partial()
+    if current_type is HomeScreen and not home_should_partial:
+        supports_partial = False
+
+    did_partial = False
     if supports_partial and last_img is not None and last_disp is disp and img.size == last_img.size:
         diff = ImageChops.difference(last_img, img)
         bbox = diff.getbbox()
@@ -60,12 +75,26 @@ def render_and_push(disp, screen):
         full_area = img.width * img.height
         if area < full_area // 3:
             disp.render_partial(img, (x0, y0, x1, y1))
+            did_partial = True
         else:
             disp.render(img)
     else:
         disp.render(img)
 
     render_and_push._last_frame = (disp, img.copy(), current_type)
+
+    if current_type is HomeScreen:
+        render_and_push._home_should_partial_next = not did_partial
+    else:
+        render_and_push._home_should_partial_next = False
+
+
+_INDEX_NOW_STATE = {
+    'thread': None,
+    'status': 'idle',
+    'error_code': None,
+    'error_detail': None,
+}
 
 
 def run_manual_backup(disp, cfg, paths, buttons: Buttons, dev_mode: bool):
@@ -205,12 +234,12 @@ def run_gopro_import(disp, cfg, paths, buttons: Buttons, dev_mode: bool):
         ),
     )
 
-    metadata_index = MediaMetadataIndex(paths)
     min_free = int(cfg.get('limits', {}).get('min_free_gb', 10)) * 1_000_000_000
+    verify_mode = cfg['verify']['default_mode']
 
     last_name = {'name': ''}
 
-    def progress_cb(done: int, total: int, fraction: float, name: str) -> None:
+    def _update_progress(fraction: float, name: str | None = None) -> None:
         if name:
             last_name['name'] = name
         status = f"GoPro: {last_name['name']}" if last_name['name'] else 'GoPro'
@@ -230,25 +259,70 @@ def run_gopro_import(disp, cfg, paths, buttons: Buttons, dev_mode: bool):
             ),
         )
 
-    # Prefer HTTP (GoPro Connect) import for reliability
-    link = prepare_link()
-    if not link:
-        render_and_push(disp, ErrorScreen(disp.width, disp.height, lang, tr(lang, 'errors.gopro_connect_failed')))
+    def http_progress(done: int, total: int, fraction: float, name: str) -> None:
+        _update_progress(fraction, name)
+
+    def mtp_progress(i: int, total: int) -> None:
+        fraction = i / total if total else 0.0
+        _update_progress(fraction)
+
+    result = import_media_mtp(paths, verify_mode=verify_mode, progress_cb=mtp_progress)
+
+    if result is None:
+        metadata_index = MediaMetadataIndex(paths)
+        link = prepare_link()
+        if not link:
+            render_and_push(disp, ErrorScreen(disp.width, disp.height, lang, tr(lang, 'errors.gopro_connect_failed')))
+            _wait_for_home(buttons, dev_mode)
+            return
+        iface, host_ip = link
+        try:
+            result = import_media_http(
+                paths,
+                metadata_index,
+                min_free,
+                progress_cb=http_progress,
+                host=host_ip,
+            )
+        finally:
+            teardown_link(iface)
+
+    if result is None:
+        render_and_push(disp, ErrorScreen(disp.width, disp.height, lang, tr(lang, 'errors.gopro_import_failed')))
         _wait_for_home(buttons, dev_mode)
         return
-    iface, host_ip = link
-    try:
-        http_res = import_media_http(
-            paths,
-            metadata_index,
-            min_free,
-            progress_cb=progress_cb,
-            host=host_ip,
-        )
-    finally:
-        teardown_link(iface)
 
-    result = http_res
+    if result.errors:
+        msg: str
+        first = result.errors[0]
+        if isinstance(first, str) and first.startswith('low_space:'):
+            parts = first.split(':')
+            if len(parts) >= 4:
+                try:
+                    need = int(parts[1])
+                    available = int(parts[2])
+                    reserve = int(parts[3])
+                except ValueError:
+                    need = available = reserve = 0
+                msg = tr(
+                    lang,
+                    'errors.gopro_low_space',
+                    need=bytes_to_gb(need),
+                    available=bytes_to_gb(available),
+                    reserve=bytes_to_gb(reserve),
+                )
+            else:
+                msg = tr(lang, 'errors.gopro_low_space', need='0gb', available='0gb', reserve='0gb')
+        else:
+            base = tr(lang, 'errors.gopro_import_failed')
+            detail = first if isinstance(first, str) else ''
+            msg = f"{base}\n{detail}" if detail else base
+        extras = [err for err in result.errors[1:] if isinstance(err, str) and err]
+        if extras:
+            msg = "\n".join([msg, *extras])
+        render_and_push(disp, ErrorScreen(disp.width, disp.height, lang, msg))
+        _wait_for_home(buttons, dev_mode)
+        return
 
     if result.total == 0:
         render_and_push(disp, ErrorScreen(disp.width, disp.height, lang, tr(lang, 'errors.gopro_no_media')))
@@ -636,16 +710,116 @@ def run(dev_mode: bool = True):
                     _t.sleep(0.05)
 
         elif sel == 2:
-            media_stats = collect_trip_media_stats(cfg, paths)
-            stats = {
-                'trip_name': media_stats.trip_name,
-                'video_duration': media_stats.video_duration_label,
-                'photo_count': media_stats.photo_count,
-                'free_gb': bytes_to_gb(media_stats.free_bytes),
-                'devices': media_stats.device_names,
-            }
-            render_and_push(disp, InfoScreen(disp.width, disp.height, lang, stats))
-            _wait_for_home(buttons, dev_mode)
+            transcription_cfg = cfg.get('transcription') or {}
+            transcription_enabled = bool(transcription_cfg.get('enabled', True))
+            status_text: Optional[str] = None
+
+            def _render_info() -> None:
+                media_stats = collect_trip_media_stats(cfg, paths)
+                stats = {
+                    'trip_name': media_stats.trip_name,
+                    'video_duration': media_stats.video_duration_label,
+                    'photo_count': media_stats.photo_count,
+                    'free_gb': bytes_to_gb(media_stats.free_bytes),
+                    'devices': media_stats.device_names,
+                }
+                render_and_push(
+                    disp,
+                    InfoScreen(
+                        disp.width,
+                        disp.height,
+                        lang,
+                        stats,
+                        status=status_text,
+                        show_index_action=transcription_enabled,
+                    ),
+                )
+
+            if dev_mode:
+                _render_info()
+                _wait_for_home(buttons, dev_mode)
+                continue
+
+            last_status_token: Optional[str] = None
+
+            def _refresh_index_status() -> None:
+                nonlocal status_text, last_status_token
+                state = _INDEX_NOW_STATE.get('status') or 'idle'
+                if state == last_status_token:
+                    return
+                if state == 'idle':
+                    if last_status_token and last_status_token != 'idle' and not _INDEX_NOW_STATE.get('error_code'):
+                        # Keep latest status message until user leaves screen.
+                        pass
+                    last_status_token = 'idle'
+                    return
+                if state == 'running':
+                    status_text = tr(lang, 'info.index_running')
+                    last_status_token = 'running'
+                    _render_info()
+                    return
+                if state == 'done':
+                    status_text = tr(lang, 'info.index_done')
+                    _render_info()
+                    _INDEX_NOW_STATE['status'] = 'idle'
+                    last_status_token = 'idle'
+                    return
+                if state == 'error':
+                    code = _INDEX_NOW_STATE.get('error_code')
+                    if code == 'missing_dependency':
+                        status_text = tr(lang, 'info.index_missing_deps')
+                    else:
+                        status_text = tr(lang, 'info.index_failed')
+                    _render_info()
+                    _INDEX_NOW_STATE['status'] = 'idle'
+                    last_status_token = 'idle'
+
+            _render_info()
+            import time as _t
+            last_buttons = [False, False, False, False]
+            while True:
+                _refresh_index_status()
+                st = buttons.read() or [False, False, False, False]
+                if st[2] and not last_buttons[2]:
+                    if not transcription_enabled:
+                        status_text = tr(lang, 'info.index_disabled')
+                        _render_info()
+                    else:
+                        existing_thread = _INDEX_NOW_STATE.get('thread')
+                        if existing_thread and existing_thread.is_alive():
+                            status_text = tr(lang, 'info.index_running')
+                            _render_info()
+                        else:
+                            def _run_index_now():
+                                try:
+                                    worker = TranscriptionWorker(paths, TranscriptionQueue(paths), cfg)
+                                    worker.run_once(ignore_window=True)
+                                    _INDEX_NOW_STATE['status'] = 'done'
+                                    _INDEX_NOW_STATE['error_code'] = None
+                                    _INDEX_NOW_STATE['error_detail'] = None
+                                except MissingDependencyError:
+                                    _INDEX_NOW_STATE['status'] = 'error'
+                                    _INDEX_NOW_STATE['error_code'] = 'missing_dependency'
+                                    _INDEX_NOW_STATE['error_detail'] = None
+                                except Exception as exc:
+                                    _INDEX_NOW_STATE['status'] = 'error'
+                                    _INDEX_NOW_STATE['error_code'] = 'error'
+                                    _INDEX_NOW_STATE['error_detail'] = str(exc)
+                                finally:
+                                    _INDEX_NOW_STATE['thread'] = None
+
+                            status_text = tr(lang, 'info.index_started')
+                            _INDEX_NOW_STATE['status'] = 'running'
+                            _INDEX_NOW_STATE['error_code'] = None
+                            _INDEX_NOW_STATE['error_detail'] = None
+                            thread = threading.Thread(target=_run_index_now, daemon=True)
+                            _INDEX_NOW_STATE['thread'] = thread
+                            _render_info()
+                            thread.start()
+                if st[3] and not last_buttons[3]:
+                    break
+                last_buttons = st
+                _t.sleep(0.05)
 
         elif sel == 3:
             # Settings flow returns to Home on confirm Yes/No; if canceled, stays in Settings

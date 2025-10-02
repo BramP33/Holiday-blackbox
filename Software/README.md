@@ -9,6 +9,7 @@ Holiday Blackbox is a Raspberry Pi 5 field backup appliance for offloading camer
 - Button-driven e-paper UI with a PNG mock display for desktop development.
 - Lightweight Flask web UI (`/photos`, `/videos`, `/`) with pagination and downloads.
 - Optional access-point mode powered by NetworkManager helpers.
+- On-device transcription and keyword indexing (scheduled overnight, with a manual "Index now" trigger on the info screen).
 
 ## Hardware Targets
 - Raspberry Pi 5 (Raspberry Pi OS Lite, 64-bit recommended).
@@ -40,7 +41,7 @@ Quick recap once Raspberry Pi OS Lite is running and the repo is in `~/Holiday-b
 cd ~/Holiday-blackbox/Software
 chmod +x scripts/*.sh
 ./scripts/install.sh
-# The installer creates .venv, installs Python deps, copies systemd units,
+# The installer creates .venv, installs Python deps from PyPI, copies systemd units,
 # and prints the `sudo systemctl enable --now ...` command to run next.
 ```
 
@@ -76,6 +77,18 @@ Set `BLACKBOX_PARTIAL=1` if you want to exercise partial refresh support with re
 3. Verifies each copy using the configured mode (`fast` size or `sha256`). Failures retrigger a copy once before reporting an error.
 4. Video imports update the metadata index to power duration stats and the web gallery.
 5. On low voltage the UI warns and pauses until power is stable.
+
+## Transcription & Search
+- New video imports are queued for on-device transcription (Whisper via `faster-whisper`) and keyword extraction. Jobs run automatically during the nightly window configured in `transcription.start_time`/`end_time` (default 22:00–07:00).
+- You can press the third button on the Info screen to bypass the schedule and start indexing immediately; the screen shows live status while the worker runs in the background.
+- To invoke the worker from the shell (e.g., for development), use:
+  ```bash
+  cd ~/Holiday-blackbox/Software
+  source .venv/bin/activate
+  python -m blackbox.transcription.worker --once  # process queue and exit
+  ```
+- Keyword extraction defaults to a lightweight frequency scorer; switch `transcription.keywords.method` to `sentence-transformer` if you also install a compact `sentence-transformers` model for richer semantics.
+- Semantic search adds multilingual embeddings (English & Dutch friendly) via the `transcription.semantic` section. Install `sentence-transformers` to enable the default `paraphrase-multilingual-MiniLM-L12-v2` model, or change the model ID/device if you prefer another encoder.
 
 ## Web UI & JSON API
 - Serves from `0.0.0.0:<port>` (default 8080).

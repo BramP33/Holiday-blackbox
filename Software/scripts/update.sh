@@ -12,13 +12,27 @@ else
   echo "No git repo detected; skipping git pull."
 fi
 
-PY="$DIR/.venv/bin/python"
-if [ -x "$PY" ]; then
+PY_VENV="$DIR/.venv/bin/python"
+PY_CMD=""
+if [ -x "$PY_VENV" ]; then
+  PY_CMD="$PY_VENV"
   echo "Updating Python dependencies in venv..."
-  "$PY" -m pip install -r "$DIR/requirements.txt"
+  "$PY_CMD" -m pip install -r "$DIR/requirements.txt"
 else
-  echo "No venv detected; installing with system python (may require --break-system-packages)"
-  python3 -m pip install -r "$DIR/requirements.txt" || true
+  if command -v python3 >/dev/null 2>&1; then
+    PY_CMD=$(command -v python3)
+    echo "No venv detected; installing with $PY_CMD (may require --break-system-packages)"
+    "$PY_CMD" -m pip install -r "$DIR/requirements.txt" || true
+  else
+    echo "python3 not found; skipping dependency install and transcript reindex."
+  fi
+fi
+
+if [ -n "$PY_CMD" ]; then
+  echo "Requeueing transcripts for current Whisper model..."
+  if ! (cd "$DIR" && "$PY_CMD" -m Software.scripts.reindex_transcripts); then
+    echo "Warning: transcript requeue failed; run '$PY_CMD -m Software.scripts.reindex_transcripts' manually." >&2
+  fi
 fi
 
 echo "Restarting services..."

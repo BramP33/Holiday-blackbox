@@ -79,7 +79,16 @@
             {% endif %}
           </div>
           <div class="card-actions">
-            <a class="btn" href="/download?p={{ item.path }}">{{ t('web.videos.download_button') }}</a>
+            <div class="card-buttons">
+              <a class="btn" href="/download?p={{ item.path }}">{{ t('web.videos.download_button') }}</a>
+              {% if item.transcript_available %}
+                <a class="btn outline" href="{{ url_for('download_transcript', p=item.path) }}">{{ t('web.videos.download_transcript_button') }}</a>
+              {% elif item.transcript_state in ['pending', 'processing'] %}
+                <span class="transcript-status">{{ t('web.videos.transcript_processing') }}</span>
+              {% elif item.transcript_state == 'error' %}
+                <span class="transcript-status error">{{ t('web.videos.transcript_unavailable') }}</span>
+              {% endif %}
+            </div>
             <form method="post" action="/delete" onsubmit="return confirm('{{ t('web.photos.delete_confirm') }}');">
               <input type="hidden" name="p" value="{{ item.path }}" />
               <button class="btn danger" type="submit">{{ t('web.photos.delete_button') }}</button>
