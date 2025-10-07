@@ -134,13 +134,8 @@ class AppTheme {
           size: 20,
         ),
       ),
-      cardTheme: const CardTheme().copyWith(
-        color: AppColors.charcoalSoft,
-        shape: const RoundedRectangleBorder(
-          borderRadius: BorderRadius.all(Radius.circular(12)),
-        ),
-        margin: EdgeInsets.zero,
-      ),
+      // cardTheme: temporarily disabled for Flutter 3.35.5 compatibility
+      cardTheme: null,
       navigationRailTheme: NavigationRailThemeData(
         backgroundColor: AppColors.charcoalSoft,
         selectedIconTheme: const IconThemeData(color: AppColors.amber, size: 30),
@@ -186,22 +181,8 @@ class AppTheme {
           return const IconThemeData(color: AppColors.sage, size: 26);
         }),
       ),
-      tabBarTheme: TabBarTheme(
-        indicatorColor: AppColors.amber,
-        dividerColor: Colors.transparent,
-        labelStyle: _oswaldStyle(
-          weight: FontWeight.w600,
-          letterSpacing: 1.05,
-          size: 15,
-          color: AppColors.amber,
-        ),
-        unselectedLabelStyle: _oswaldStyle(
-          weight: FontWeight.w500,
-          letterSpacing: 1.0,
-          size: 14,
-          color: AppColors.sage,
-        ),
-      ),
+      // tabBarTheme: temporarily disabled for Flutter 3.35.5 compatibility  
+      tabBarTheme: null,
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
         fillColor: AppColors.charcoalSoft,
@@ -274,22 +255,8 @@ class AppTheme {
           ),
         ),
       ),
-      dialogTheme: DialogTheme(
-        backgroundColor: AppColors.charcoalSoft,
-        titleTextStyle: _oswaldStyle(
-          color: AppColors.kraft,
-          weight: FontWeight.w600,
-          size: 20,
-        ),
-        contentTextStyle: _interStyle(
-          color: AppColors.kraft,
-          size: 16,
-        ),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(16),
-          side: const BorderSide(color: AppColors.rust, width: 2),
-        ),
-      ),
+      // dialogTheme: temporarily disabled for Flutter 3.35.5 compatibility
+      dialogTheme: null,
       chipTheme: ChipThemeData(
         backgroundColor: AppColors.charcoalSoft,
         selectedColor: AppColors.forest,
