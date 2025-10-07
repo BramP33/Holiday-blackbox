@@ -134,7 +134,7 @@ class AppTheme {
           size: 20,
         ),
       ),
-      cardTheme: CardTheme(
+      cardTheme: const CardTheme().copyWith(
         color: AppColors.charcoalSoft,
         shape: const RoundedRectangleBorder(
           borderRadius: BorderRadius.all(Radius.circular(12)),
