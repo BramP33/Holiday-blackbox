@@ -136,8 +136,8 @@ class AppTheme {
       ),
       cardTheme: CardTheme(
         color: AppColors.charcoalSoft,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(12),
+        shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.all(Radius.circular(12)),
         ),
         margin: EdgeInsets.zero,
       ),
