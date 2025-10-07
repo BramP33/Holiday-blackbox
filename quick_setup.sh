@@ -29,9 +29,24 @@ sudo apt install -y \
 # Enable NetworkManager for AP mode
 sudo systemctl enable --now NetworkManager
 
-# Install HyperPixel 4.0 display drivers
-echo "🖥️ Installing HyperPixel 4.0 display drivers..."
-curl https://get.pimoroni.com/hyperpixel4 | bash
+# Configure HyperPixel 4.0 display (simple config method)
+echo "🖥️ Configuring HyperPixel 4.0 display..."
+CONFIG_PATH="/boot/config.txt"
+if [ -f /boot/firmware/config.txt ]; then
+  CONFIG_PATH="/boot/firmware/config.txt"
+fi
+
+if ! grep -q "dtoverlay=vc4-kms-dpi-hyperpixel4" "$CONFIG_PATH" 2>/dev/null; then
+  echo "Adding HyperPixel configuration..."
+  cat <<EOF | sudo tee -a "$CONFIG_PATH" >/dev/null
+
+# HyperPixel 4.0 Configuration  
+dtoverlay=vc4-kms-dpi-hyperpixel4
+dtparam=rotate=90,touchscreen-swapped-x-y,touchscreen-inverted-y
+EOF
+else
+  echo "HyperPixel already configured."
+fi
 
 # Clone repository
 echo "📥 Downloading Holiday Blackbox..."

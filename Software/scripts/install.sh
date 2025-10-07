@@ -111,59 +111,28 @@ if command -v apt-get >/dev/null 2>&1; then
 fi
 
 configure_hyperpixel() {
-  local CONFIG="/boot/config.txt"
-  local NEED_INSTALL=0
-
-  if ! command -v hyperpixel4-rotate >/dev/null 2>&1; then
-    NEED_INSTALL=1
-  fi
-
-  if [ ! -f "$CONFIG" ] || ! grep -q '^dtoverlay=hyperpixel4' "$CONFIG"; then
-    NEED_INSTALL=1
-  fi
-
-  if [ "$NEED_INSTALL" -eq 0 ]; then
-    echo "HyperPixel 4.0 support already configured."
-    return
-  fi
-
-  if ! command -v git >/dev/null 2>&1; then
-    echo "git not available; install git before configuring HyperPixel." >&2
-    return
-  fi
-
-  local TMP
-  TMP=$(mktemp -d)
-
-  echo "Cloning Pimoroni HyperPixel installer (pi4 branch)..."
-  if ! git clone --depth=1 --branch pi4 https://github.com/pimoroni/hyperpixel4 "$TMP" >/dev/null 2>&1; then
-    echo "WARNING: Failed to clone hyperpixel4 repository." >&2
-    rm -rf "$TMP"
-    return
-  fi
-
   local CONFIG_PATH="/boot/config.txt"
   if [ -f /boot/firmware/config.txt ]; then
     CONFIG_PATH="/boot/firmware/config.txt"
   fi
 
-  if [ -f "$TMP/install.sh" ]; then
-    sed -i "s|CONFIG=\"/boot/config.txt\"|CONFIG=\"$CONFIG_PATH\"|" "$TMP/install.sh" || true
-  fi
-
-  echo "Running HyperPixel installer (requires sudo)..."
-  if ! (cd "$TMP" && CONFIG="$CONFIG_PATH" sudo ./install.sh); then
-    echo "WARNING: HyperPixel installer reported an error." >&2
-    rm -rf "$TMP"
+  # Check if HyperPixel config is already present
+  if grep -q "dtoverlay=vc4-kms-dpi-hyperpixel4" "$CONFIG_PATH" 2>/dev/null; then
+    echo "HyperPixel 4.0 support already configured."
     return
   fi
 
-  rm -rf "$TMP"
+  echo "Adding HyperPixel 4.0 configuration to $CONFIG_PATH..."
+  
+  # Add the working HyperPixel config
+  cat <<EOF | sudo tee -a "$CONFIG_PATH" >/dev/null
 
-  if command -v hyperpixel4-rotate >/dev/null 2>&1; then
-    echo "Setting HyperPixel orientation to landscape (ports on bottom)..."
-    sudo hyperpixel4-rotate left || echo "WARNING: Unable to rotate HyperPixel display automatically." >&2
-  fi
+# HyperPixel 4.0 Configuration
+dtoverlay=vc4-kms-dpi-hyperpixel4
+dtparam=rotate=90,touchscreen-swapped-x-y,touchscreen-inverted-y
+EOF
+
+  echo "HyperPixel 4.0 configured successfully."
 }
 
 echo "Configuring Pimoroni HyperPixel 4.0 touchscreen..."
