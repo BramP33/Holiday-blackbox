@@ -110,33 +110,7 @@ if command -v apt-get >/dev/null 2>&1; then
   sudo apt-get install -y network-manager || true
 fi
 
-configure_hyperpixel() {
-  local CONFIG_PATH="/boot/config.txt"
-  if [ -f /boot/firmware/config.txt ]; then
-    CONFIG_PATH="/boot/firmware/config.txt"
-  fi
-
-  # Check if HyperPixel config is already present
-  if grep -q "dtoverlay=vc4-kms-dpi-hyperpixel4" "$CONFIG_PATH" 2>/dev/null; then
-    echo "HyperPixel 4.0 support already configured."
-    return
-  fi
-
-  echo "Adding HyperPixel 4.0 configuration to $CONFIG_PATH..."
-  
-  # Add the working HyperPixel config
-  cat <<EOF | sudo tee -a "$CONFIG_PATH" >/dev/null
-
-# HyperPixel 4.0 Configuration
-dtoverlay=vc4-kms-dpi-hyperpixel4
-dtparam=rotate=90,touchscreen-swapped-x-y,touchscreen-inverted-y
-EOF
-
-  echo "HyperPixel 4.0 configured successfully."
-}
-
-echo "Configuring Pimoroni HyperPixel 4.0 touchscreen..."
-configure_hyperpixel
+# HyperPixel configuration is now done separately - not in this script
 
 configure_x11_launcher() {
   local USERNAME
