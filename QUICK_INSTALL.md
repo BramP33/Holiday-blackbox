@@ -1,9 +1,10 @@
-# Holiday Blackbox - Bulletproof SSH Setup
+# Holiday Blackbox - Bulletproof SSH Setup (HyperPixel)
 
 ## Prerequisites
 - Fresh Raspberry Pi OS Lite Bookworm (64-bit) 
 - SSH enabled and connected to WiFi
 - Hostname set to `blackbox` (optional maar handig)
+- **Pimoroni HyperPixel 4.0 touchscreen connected**
 
 ## 1. SSH into your Pi
 ```bash
@@ -16,29 +17,23 @@ ssh pi@blackbox.local
 curl -fsSL https://raw.githubusercontent.com/BramP33/Holiday-blackbox/main/quick_setup.sh | bash
 ```
 
-**Of als je het lokaal wilt doen (copy/paste deze hele blok):**
+**Or copy/paste this entire block:**
 ```bash
 #!/bin/bash
 set -e
 
-echo "🚀 Holiday Blackbox - Quick Setup Starting..."
+echo "🚀 Holiday Blackbox - HyperPixel Quick Setup Starting..."
 
 # Update system
 echo "📦 Updating system..."
 sudo apt update && sudo apt full-upgrade -y
 
-# Enable SPI
-echo "🔧 Enabling SPI..."
-sudo raspi-config nonint do_spi 0
-
-# Install dependencies
+# Install dependencies (NO SPI - using HyperPixel display)
 echo "📚 Installing dependencies..."
 sudo apt install -y \
   git \
   python3-pip \
   python3-venv \
-  python3-rpi-lgpio \
-  python3-spidev \
   python3-pil \
   ffmpeg \
   fonts-dejavu \
@@ -47,10 +42,17 @@ sudo apt install -y \
   xserver-xorg \
   xinit \
   openbox \
-  libgtk-3-0
+  libgtk-3-0 \
+  device-tree-compiler \
+  curl \
+  build-essential
 
 # Enable NetworkManager for AP mode
 sudo systemctl enable --now NetworkManager
+
+# Install HyperPixel 4.0 display drivers
+echo "🖥️ Installing HyperPixel 4.0 display drivers..."
+curl https://get.pimoroni.com/hyperpixel4 | bash
 
 # Clone repository
 echo "📥 Downloading Holiday Blackbox..."
@@ -67,9 +69,9 @@ chmod +x scripts/*.sh
 echo "⚙️ Enabling services..."
 sudo systemctl enable --now blackbox.service blackbox-web.service blackbox-poweroff.service
 
-# Add user to groups
+# Add user to groups (NO gpio/spi groups - HyperPixel doesn't need them)
 echo "👤 Adding user to required groups..."
-sudo usermod -aG spi,gpio,video,input "$USER"
+sudo usermod -aG video,input "$USER"
 
 # Create data directory
 echo "💾 Setting up data directory..."
@@ -78,18 +80,20 @@ sudo chown -R "$USER:$USER" /mnt/nvme
 
 echo "✅ Installation complete!"
 echo ""
-echo "🔄 REBOOT REQUIRED for group changes to take effect:"
+echo "🔄 REBOOT REQUIRED for HyperPixel display and group changes to take effect:"
 echo "   sudo reboot"
 echo ""
 echo "After reboot:"
 echo "   🌐 Web interface: http://blackbox.local:8080"
-echo "   📱 E-paper display should show menu"
+echo "   📱 HyperPixel display should show touchscreen interface"
 echo "   🔧 Config file: ~/Holiday-blackbox/Software/config.yml"
 echo ""
 echo "🚨 Don't forget to:"
-echo "   1. Connect your e-paper display (SPI pins)"
-echo "   2. Connect buttons to GPIO pins"
-echo "   3. Edit config.yml for your trip settings"
+echo "   1. Edit config.yml for your trip settings"
+echo "   2. Test touch interface on the HyperPixel"
+echo "   3. Connect any USB devices you want to backup"
+echo ""
+echo "💡 NO GPIO pins are used with HyperPixel setup - all pins are free for other uses!"
 ```
 
 ## 3. Reboot
@@ -105,8 +109,8 @@ sudo systemctl status blackbox blackbox-web
 # Check web interface
 curl http://localhost:8080
 
-# Check e-paper (should show menu)
-journalctl -u blackbox -f
+# Check HyperPixel display (should show Flutter touch interface)
+sudo systemctl status blackbox-flutter
 ```
 
 ## 5. Configure your trip
@@ -120,23 +124,17 @@ sudo systemctl restart blackbox blackbox-web
 
 ---
 
-## Hardware Connections
+## Hardware Setup
 
-### E-paper Display (Waveshare 2.7" V2)
-- VCC → 3.3V
-- GND → GND  
-- DIN → GPIO10 (MOSI)
-- CLK → GPIO11 (SCLK)
-- CS → GPIO8 (CE0)
-- DC → GPIO25
-- RST → GPIO17
-- BUSY → GPIO24
+### HyperPixel 4.0 Display
+- **NO manual wiring needed** - HyperPixel uses the 40-pin header automatically
+- Touch interface will show after reboot
+- Display is rotated to landscape automatically 
+- **ALL GPIO pins are free** for other uses (no e-paper, no buttons needed)
 
-### Buttons (connect to GND)
-- Button 1 → GPIO5
-- Button 2 → GPIO6  
-- Button 3 → GPIO13
-- Button 4 → GPIO19
+### USB Storage
+- Connect USB drives, cameras, phones via USB ports
+- Automatic backup detection and import
 
 ---
 
@@ -154,13 +152,24 @@ sudo systemctl status blackbox-web
 ss -tlnp | grep 8080
 ```
 
-### E-paper not working?
+### HyperPixel display not working?
 ```bash
-# Check SPI is enabled
-ls -la /dev/spi*
+# Check HyperPixel driver installation
+ls /boot/overlays/hyperpixel*
+dmesg | grep -i hyperpixel
 
-# Test waveshare library
-python3 -c "from waveshare_epd import epd2in7_V2; print('OK')"
+# Check Flutter touch interface
+sudo systemctl status blackbox-flutter
+journalctl -u blackbox-flutter -e
+```
+
+### Touch not responding?
+```bash
+# Check input devices
+cat /proc/bus/input/devices | grep -A5 -i touch
+
+# Test touch events
+sudo evtest
 ```
 
 ### Can't connect to WiFi?
@@ -177,29 +186,43 @@ cd ~/Holiday-blackbox/Software
 
 ---
 
-## Optional: Flutter GUI Setup
+## Flutter Touch Interface (Auto-installed)
 
-If you want the touch interface (requires more setup):
+The HyperPixel setup automatically includes a Flutter touch interface that will:
+
+1. **Auto-start on boot** - Shows on the HyperPixel display
+2. **Full touch control** - No physical buttons needed
+3. **Media browsing** - Swipe through photos/videos
+4. **Settings** - WiFi, backup settings, trip configuration
+5. **Live backup progress** - Real-time status updates
+
+### Manual Flutter Operations (if needed):
 
 ```bash
-# Install Flutter for ARM64
-cd ~
-wget https://storage.googleapis.com/flutter_infra_release/releases/stable/linux/flutter_linux_3.22.0-stable.tar.xz
-tar xf flutter_linux_3.22.0-stable.tar.xz
-echo 'export PATH="$HOME/flutter/bin:$PATH"' >> ~/.bashrc
-source ~/.bashrc
+# Check Flutter service status
+sudo systemctl status blackbox-flutter
 
-# Enable Linux desktop
-flutter config --enable-linux-desktop
-
-# Build the app
-cd ~/Holiday-blackbox/Software/flutter_frontend
-flutter pub get
-flutter build linux --release
-
-# Deploy
-sudo cp -r build/linux/x64/release/bundle /opt/blackbox_flutter
+# Restart Flutter interface
 sudo systemctl restart blackbox-flutter
+
+# View Flutter logs
+journalctl -u blackbox-flutter -f
+
+# Test Flutter manually (from SSH)
+export DISPLAY=:0
+cd ~/Holiday-blackbox/Software/flutter_frontend
+/opt/blackbox_flutter/blackbox_flutter
 ```
 
-This guide gets you 90% there with minimal fuss!
+---
+
+## Advantages of HyperPixel Setup:
+
+✅ **No GPIO pin conflicts** - All 40 pins available for other projects  
+✅ **Full touchscreen interface** - Much more intuitive than e-paper + buttons  
+✅ **Faster UI** - Real-time updates, smooth animations  
+✅ **Better media viewing** - High-resolution photo/video preview  
+✅ **Easier setup** - No manual wiring of displays or buttons  
+✅ **Future-proof** - Easy to add more touch features  
+
+This setup gives you the full Holiday Blackbox experience with a modern touch interface!

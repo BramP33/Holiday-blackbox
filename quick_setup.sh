@@ -1,24 +1,18 @@
 #!/bin/bash
 set -e
 
-echo "🚀 Holiday Blackbox - Quick Setup Starting..."
+echo "🚀 Holiday Blackbox - HyperPixel Quick Setup Starting..."
 
 # Update system
 echo "📦 Updating system..."
 sudo apt update && sudo apt full-upgrade -y
 
-# Enable SPI
-echo "🔧 Enabling SPI..."
-sudo raspi-config nonint do_spi 0
-
-# Install dependencies
+# Install dependencies (NO SPI - using HyperPixel display)
 echo "📚 Installing dependencies..."
 sudo apt install -y \
   git \
   python3-pip \
   python3-venv \
-  python3-rpi-lgpio \
-  python3-spidev \
   python3-pil \
   ffmpeg \
   fonts-dejavu \
@@ -27,10 +21,17 @@ sudo apt install -y \
   xserver-xorg \
   xinit \
   openbox \
-  libgtk-3-0
+  libgtk-3-0 \
+  device-tree-compiler \
+  curl \
+  build-essential
 
 # Enable NetworkManager for AP mode
 sudo systemctl enable --now NetworkManager
+
+# Install HyperPixel 4.0 display drivers
+echo "🖥️ Installing HyperPixel 4.0 display drivers..."
+curl https://get.pimoroni.com/hyperpixel4 | bash
 
 # Clone repository
 echo "📥 Downloading Holiday Blackbox..."
@@ -47,9 +48,9 @@ chmod +x scripts/*.sh
 echo "⚙️ Enabling services..."
 sudo systemctl enable --now blackbox.service blackbox-web.service blackbox-poweroff.service
 
-# Add user to groups
+# Add user to groups (NO gpio/spi groups - HyperPixel doesn't need them)
 echo "👤 Adding user to required groups..."
-sudo usermod -aG spi,gpio,video,input "$USER"
+sudo usermod -aG video,input "$USER"
 
 # Create data directory
 echo "💾 Setting up data directory..."
@@ -58,15 +59,17 @@ sudo chown -R "$USER:$USER" /mnt/nvme
 
 echo "✅ Installation complete!"
 echo ""
-echo "🔄 REBOOT REQUIRED for group changes to take effect:"
+echo "🔄 REBOOT REQUIRED for HyperPixel display and group changes to take effect:"
 echo "   sudo reboot"
 echo ""
 echo "After reboot:"
 echo "   🌐 Web interface: http://blackbox.local:8080"
-echo "   📱 E-paper display should show menu"
+echo "   📱 HyperPixel display should show touchscreen interface"
 echo "   🔧 Config file: ~/Holiday-blackbox/Software/config.yml"
 echo ""
 echo "🚨 Don't forget to:"
-echo "   1. Connect your e-paper display (SPI pins)"
-echo "   2. Connect buttons to GPIO pins"
-echo "   3. Edit config.yml for your trip settings"
+echo "   1. Edit config.yml for your trip settings"
+echo "   2. Test touch interface on the HyperPixel"
+echo "   3. Connect any USB devices you want to backup"
+echo ""
+echo "💡 NO GPIO pins are used with HyperPixel setup - all pins are free for other uses!"
