@@ -15,11 +15,14 @@ from ..config import load_config, save_config
 from ..paths import Paths
 from ..i18n import t as tr
 from ..media.metadata import LocationSuggestion, MediaMetadataIndex, VideoMetadata, _run_ffprobe, _collect_tags, _extract_timestamp
-from ..backup.backup import copy_from_source
+from ..backup.backup import CopyProgress, copy_from_source
 from ..backup.backup import VIDEO_EXTS as BACKUP_VIDEO_EXTS
 from ..proxies.generate import generate_for_folder
 from ..transcription import TranscriptionQueue
-
+from ..stats import collect_trip_media_stats
+from ..backup.scanner import find_source_mounts
+from ..hardware.usb import ensure_usb_mounted
+from ..health import collect_health
 
 def create_app() -> Flask:
     cfg = load_config()
@@ -35,6 +38,86 @@ def create_app() -> Flask:
     trash_root = paths.trash_dir().resolve()
     trash_meta_dir = trash_root / '.meta'
     trash_meta_dir.mkdir(parents=True, exist_ok=True)
+
+    backup_lock = threading.Lock()
+    backup_state: dict[str, object] = {
+        'phase': 'idle',
+        'progress': 0.0,
+        'copied_files': 0,
+        'total_files': 0,
+        'bytes_copied': 0,
+        'device_label': None,
+        'eta': None,
+        'speed': None,
+        'message': None,
+        'errors': [],
+        'updated_at': dt.datetime.utcnow().replace(tzinfo=dt.timezone.utc).isoformat(),
+        'can_cancel': False,
+        'skipped_files': 0,
+        'replaced_files': 0,
+        'previews_done': 0,
+        'previews_total': 0,
+        'current_file': None,
+    }
+    backup_thread = None
+
+    def _now_iso() -> str:
+        return dt.datetime.utcnow().replace(tzinfo=dt.timezone.utc).isoformat()
+
+    def _set_backup_state(**updates) -> None:
+        errors = updates.pop('errors', None)
+        with backup_lock:
+            if errors is not None:
+                backup_state['errors'] = list(errors)
+            for key, value in updates.items():
+                if key == 'device_label' and value is not None:
+                    backup_state[key] = str(value)
+                else:
+                    backup_state[key] = value
+            backup_state['updated_at'] = _now_iso()
+
+    def _get_backup_state() -> dict:
+        with backup_lock:
+            data = dict(backup_state)
+            data['errors'] = list(backup_state.get('errors') or [])
+            return data
+
+    def _format_srt_timestamp(seconds: float) -> str:
+        total_ms = int(round(max(seconds, 0.0) * 1000))
+        hours, remainder = divmod(total_ms, 3600_000)
+        minutes, remainder = divmod(remainder, 60_000)
+        secs, millis = divmod(remainder, 1000)
+        return f'{hours:02d}:{minutes:02d}:{secs:02d},{millis:03d}'
+
+    def _render_srt_from_record(record: dict) -> str | None:
+        segments = record.get('segments') or []
+        lines: list[str] = []
+        index = 1
+        for segment in segments:
+            try:
+                start = float(segment.get('start') or 0.0)
+            except Exception:
+                start = 0.0
+            try:
+                end = float(segment.get('end') or start)
+            except Exception:
+                end = start
+            text = str(segment.get('text') or '').strip()
+            if not text:
+                continue
+            if end <= start:
+                end = start + 0.5
+            lines.append(str(index))
+            lines.append(f'{_format_srt_timestamp(start)} --> {_format_srt_timestamp(end)}')
+            lines.append(text)
+            lines.append('')
+            index += 1
+        if lines:
+            return '\n'.join(lines).strip()
+        transcript = (record.get('transcript') or '').strip()
+        if transcript:
+            return transcript
+        return None
 
     def _trip_begin_timestamp(cur_cfg: dict | None = None) -> float | None:
         cfg_local = cur_cfg or load_config()
@@ -344,6 +427,26 @@ def create_app() -> Flask:
             status['error_message'] = None
         return render_template('trash.html', entries=entries, status=status)
 
+    @app.get('/api/trash')
+    def api_trash_list():
+        entries = _load_trash_entries()
+        result = []
+        for entry in entries:
+            folder = Path(entry['original_rel']).parent.as_posix()
+            result.append({
+                'id': entry['id'],
+                'stored_rel': entry['stored_rel'],
+                'original_rel': entry['original_rel'],
+                'folder': folder if folder and folder != '.' else None,
+                'trashed_at': entry.get('trashed_at'),
+                'trashed_at_display': _format_timestamp(entry.get('trashed_at')),
+                'kind': entry.get('kind'),
+                'size': entry.get('size'),
+                'size_display': entry.get('size_display'),
+                'filename': entry.get('filename'),
+            })
+        return jsonify({'entries': result})
+
     @app.get('/trash/download')
     def trash_download():
         trash_id = request.args.get('id')
@@ -379,6 +482,17 @@ def create_app() -> Flask:
             return redirect(url_for('trash_page', restored=trash_id))
         return redirect(url_for('trash_page', error=reason or 'error', target=trash_id))
 
+    @app.post('/api/trash/restore')
+    def api_trash_restore():
+        payload = request.get_json(silent=True) or {}
+        trash_id = (payload.get('id') or '').strip()
+        if not trash_id:
+            return jsonify({'error': 'missing_id'}), 400
+        ok, reason = _restore_trash_entry(trash_id)
+        if ok:
+            return jsonify({'status': 'restored'})
+        return jsonify({'error': reason or 'restore_failed'}), 400
+
     @app.post('/trash/purge')
     def trash_purge():
         trash_id = request.form.get('id')
@@ -388,6 +502,17 @@ def create_app() -> Flask:
         if ok:
             return redirect(url_for('trash_page', deleted=trash_id))
         return redirect(url_for('trash_page', error='delete_failed', target=trash_id))
+
+    @app.post('/api/trash/purge')
+    def api_trash_purge():
+        payload = request.get_json(silent=True) or {}
+        trash_id = (payload.get('id') or '').strip()
+        if not trash_id:
+            return jsonify({'error': 'missing_id'}), 400
+        ok = _delete_trash_entry(trash_id)
+        if ok:
+            return jsonify({'status': 'deleted'})
+        return jsonify({'error': 'delete_failed'}), 400
 
     @app.context_processor
     def inject_i18n():
@@ -523,6 +648,300 @@ def create_app() -> Flask:
             'label': suggestion.label,
             'query': suggestion.query,
         }
+
+    @app.get('/api/stats')
+    def api_stats():
+        cfg_local = load_config()
+        stats = collect_trip_media_stats(cfg_local, paths)
+        return jsonify({
+            'trip_name': stats.trip_name,
+            'video_seconds': stats.video_seconds,
+            'video_duration_label': stats.video_duration_label,
+            'photo_count': stats.photo_count,
+            'free_bytes': stats.free_bytes,
+            'device_names': stats.device_names,
+            'generated_at': _now_iso(),
+        })
+
+    @app.get('/api/health')
+    def api_health():
+        cfg_local = load_config()
+        probe_buttons_arg = (request.args.get('probe_buttons') or '1').lower()
+        probe_buttons = probe_buttons_arg not in {'0', 'false', 'no'}
+        summary = collect_health(paths, cfg_local, probe_buttons=probe_buttons)
+        return jsonify(summary)
+
+    @app.get('/api/backup/status')
+    def api_backup_status():
+        return jsonify(_get_backup_state())
+
+    @app.post('/api/backup/start')
+    def api_backup_start():
+        nonlocal backup_thread
+        with backup_lock:
+            if backup_thread and backup_thread.is_alive():
+                return jsonify({'status': 'running', 'state': _get_backup_state()}), 409
+
+        cfg_local = load_config()
+        ensure_usb_mounted()
+        matches = find_source_mounts(cfg_local.get('paths', {}).get('source_roots', []))
+        filtered: list[Path] = []
+        for candidate in matches:
+            try:
+                if candidate.resolve() == paths.nvme_mount.resolve():
+                    continue
+            except Exception:
+                pass
+            filtered.append(candidate)
+        matches = filtered
+
+        if not matches:
+            _set_backup_state(
+                phase='idle',
+                progress=0.0,
+                copied_files=0,
+                total_files=0,
+                bytes_copied=0,
+                message='No source detected',
+                can_cancel=False,
+                errors=[],
+                skipped_files=0,
+                replaced_files=0,
+                previews_done=0,
+                previews_total=0,
+                eta=None,
+                speed=None,
+                current_file=None,
+            )
+            return jsonify({'status': 'error', 'reason': 'no_source'}), 400
+        if len(matches) > 1:
+            _set_backup_state(
+                phase='idle',
+                message='Multiple sources detected',
+                can_cancel=False,
+                errors=[],
+                copied_files=0,
+                total_files=0,
+                bytes_copied=0,
+                skipped_files=0,
+                replaced_files=0,
+                previews_done=0,
+                previews_total=0,
+                eta=None,
+                speed=None,
+                current_file=None,
+            )
+            return jsonify({
+                'status': 'error',
+                'reason': 'multiple_sources',
+                'candidates': [str(m) for m in matches],
+            }), 409
+
+        source = matches[0]
+        _set_backup_state(
+            phase='preparing',
+            progress=0.0,
+            copied_files=0,
+            total_files=0,
+            bytes_copied=0,
+            device_label=source.name,
+            message=f'Preparing backup from {source.name}',
+            errors=[],
+            can_cancel=False,
+            skipped_files=0,
+            replaced_files=0,
+            eta=None,
+            speed=None,
+            previews_done=0,
+            previews_total=0,
+            current_file=None,
+        )
+
+        def _worker() -> None:
+            nonlocal backup_thread
+            cfg_thread = load_config()
+            total_tracker = {'total': 0}
+            start_ts = time.monotonic()
+
+            def _format_rate(bytes_per_second: float) -> str | None:
+                if bytes_per_second <= 0:
+                    return None
+                units = ['B/s', 'KB/s', 'MB/s', 'GB/s', 'TB/s']
+                value = bytes_per_second
+                unit = units[0]
+                for candidate in units[1:]:
+                    if value >= 1024:
+                        value /= 1024
+                        unit = candidate
+                    else:
+                        break
+                precision = 1 if value < 100 else 0
+                return f"{value:.{precision}f} {unit}"
+
+            def _format_eta(seconds: float | None) -> str | None:
+                if seconds is None or seconds <= 0:
+                    return None
+                minutes, sec = divmod(int(seconds + 0.5), 60)
+                hours, minutes = divmod(minutes, 60)
+                if hours > 0:
+                    return f"{hours}h {minutes:02}m"
+                if minutes > 0:
+                    return f"{minutes}m {sec:02}s"
+                return f"{sec}s"
+
+            def progress_cb(progress: CopyProgress) -> None:
+                total_tracker['total'] = max(total_tracker['total'], progress.total)
+                fraction = progress.index / progress.total if progress.total else 0.0
+                elapsed = max(time.monotonic() - start_ts, 0.1)
+                speed = progress.bytes_copied / elapsed if progress.bytes_copied > 0 else 0.0
+                effective_copied = max(progress.copied_files + progress.replaced_files, 0)
+                avg_bytes = (progress.bytes_copied / effective_copied) if effective_copied > 0 else None
+                remaining_files = max(progress.total - progress.index, 0)
+                remaining_bytes = (avg_bytes * remaining_files) if (avg_bytes and remaining_files) else None
+                eta_seconds = (remaining_bytes / speed) if (remaining_bytes and speed > 0) else None
+                _set_backup_state(
+                    phase='copying',
+                    progress=fraction,
+                    copied_files=progress.copied_files,
+                    total_files=progress.total,
+                    bytes_copied=progress.bytes_copied,
+                    device_label=source.name,
+                    message=(
+                        f"Copying files ({progress.copied_files}/{progress.total})"
+                        if progress.total
+                        else 'Copying files'
+                    ),
+                    speed=_format_rate(speed),
+                    eta=_format_eta(eta_seconds),
+                    skipped_files=progress.skipped_files,
+                    replaced_files=progress.replaced_files,
+                    current_file=(progress.current_path.name if progress.current_path else None),
+                )
+
+            try:
+                verify_mode = (cfg_thread.get('verify') or {}).get('default_mode', 'fast')
+                result = copy_from_source(
+                    source,
+                    paths,
+                    verify_mode=verify_mode,
+                    progress_cb=progress_cb,
+                )
+                total_files = max(total_tracker['total'], result.copied_files + result.skipped_files + result.replaced_files)
+                if result.errors:
+                    _set_backup_state(
+                        phase='error',
+                        progress=1.0 if total_files else 0.0,
+                        copied_files=result.copied_files,
+                        total_files=total_files,
+                        bytes_copied=result.bytes_copied,
+                        device_label=result.device_name,
+                        message=result.errors[0] if result.errors else 'Backup failed',
+                        errors=result.errors,
+                        can_cancel=False,
+                        skipped_files=result.skipped_files,
+                        replaced_files=result.replaced_files,
+                        speed=None,
+                        eta=None,
+                        current_file=None,
+                        previews_done=0,
+                        previews_total=0,
+                    )
+                    return
+
+                _set_backup_state(
+                    phase='verifying',
+                    progress=0.95,
+                    copied_files=result.copied_files,
+                    total_files=total_files,
+                    bytes_copied=result.bytes_copied,
+                    device_label=result.device_name,
+                    message='Generating previews',
+                    can_cancel=False,
+                    skipped_files=result.skipped_files,
+                    replaced_files=result.replaced_files,
+                    speed=None,
+                    eta=None,
+                    current_file=None,
+                    previews_done=0,
+                    previews_total=0,
+                )
+
+                previews_cfg = cfg_thread.get('previews') or {}
+                if previews_cfg.get('enabled', True):
+                    max_cache_bytes = previews_cfg.get('max_cache_gb', 50) * 1_000_000_000
+                    height = previews_cfg.get('video_height', 480)
+                    bitrate = str(previews_cfg.get('video_bitrate', '1200k'))
+
+                    def proxy_progress(done: int, total: int, _path: Path, _kind: str) -> None:
+                        fraction = done / total if total else 1.0
+                        _set_backup_state(
+                            phase='verifying',
+                            progress=0.95 + 0.05 * fraction,
+                            message=f'Generating previews ({done}/{total})' if total else 'Generating previews',
+                            previews_done=done,
+                            previews_total=total,
+                        )
+
+                    try:
+                        generate_for_folder(
+                            paths.trip_root(),
+                            paths.proxies_dir(),
+                            max_cache_bytes,
+                            prefer_gopro_thm=True,
+                            height=height,
+                            bitrate=bitrate,
+                            progress_cb=proxy_progress,
+                        )
+                    except Exception as exc:
+                        _set_backup_state(
+                            phase='error',
+                            message=f'Preview generation failed: {exc}',
+                            errors=[f'Preview generation failed: {exc}'],
+                            can_cancel=False,
+                            previews_done=0,
+                            previews_total=0,
+                            current_file=None,
+                        )
+                        return
+
+                _set_backup_state(
+                    phase='done',
+                    progress=1.0,
+                    copied_files=result.copied_files,
+                    total_files=total_files,
+                    bytes_copied=result.bytes_copied,
+                    device_label=result.device_name,
+                    message=f'Backup complete ({result.copied_files} new files)',
+                    can_cancel=False,
+                    skipped_files=result.skipped_files,
+                    replaced_files=result.replaced_files,
+                    previews_done=result.copied_files + result.replaced_files,
+                    previews_total=result.copied_files + result.replaced_files,
+                )
+            except Exception as exc:
+                _set_backup_state(
+                    phase='error',
+                    message=f'Backup failed: {exc}',
+                    errors=[str(exc)],
+                    can_cancel=False,
+                    current_file=None,
+                )
+            finally:
+                with backup_lock:
+                    backup_thread = None
+
+        thread = threading.Thread(target=_worker, name='backup-worker', daemon=True)
+        with backup_lock:
+            backup_thread = thread
+        thread.start()
+        return jsonify({'status': 'running'})
+
+    @app.post('/api/backup/cancel')
+    def api_backup_cancel():
+        state = _get_backup_state()
+        if state.get('phase') not in {'preparing', 'copying', 'verifying', 'cancelling'}:
+            return jsonify({'status': 'idle'})
+        return jsonify({'status': 'not_supported'})
 
     @app.get('/api/photos')
     def api_photos():
@@ -820,13 +1239,13 @@ def create_app() -> Flask:
             record = None
         if not record:
             return 'not found', 404
-        transcript = (record.get('transcript') or '').strip()
-        if not transcript:
+        content = _render_srt_from_record(record)
+        if not content:
             return 'not found', 404
-        filename = Path(canonical).with_suffix('.txt').name
-        stream = io.BytesIO(transcript.encode('utf-8'))
+        filename = Path(canonical).with_suffix('.srt').name
+        stream = io.BytesIO(content.encode('utf-8'))
         stream.seek(0)
-        return send_file(stream, mimetype='text/plain', as_attachment=True, download_name=filename)
+        return send_file(stream, mimetype='application/x-subrip', as_attachment=True, download_name=filename)
 
     def _render_settings_form(cfg: dict) -> str:
         return render_template('settings.html', cfg=cfg)
@@ -849,6 +1268,48 @@ def create_app() -> Flask:
                 v = items
             cur[path[-1]] = v
         return cfg
+
+    def _deep_merge(base: dict, updates: dict) -> dict:
+        result = dict(base)
+        for key, value in (updates or {}).items():
+            if isinstance(value, dict) and isinstance(result.get(key), dict):
+                result[key] = _deep_merge(result.get(key, {}), value)
+            else:
+                result[key] = value
+        return result
+
+    @app.get('/api/config')
+    def api_get_config():
+        cfg_local = load_config()
+        return jsonify(cfg_local)
+
+    @app.route('/api/config', methods=['PUT', 'PATCH'])
+    def api_update_config():
+        payload = request.get_json(silent=True)
+        if not isinstance(payload, dict):
+            return jsonify({'error': 'invalid JSON payload'}), 400
+        cfg_local = load_config()
+        merged = _deep_merge(cfg_local, payload)
+        save_config(merged)
+        return jsonify(merged)
+
+    @app.get('/api/media/last-location')
+    def api_last_media_location():
+        latest = metadata_index.latest_with_location()
+        if not latest:
+            return jsonify({'error': 'not found'}), 404
+        meta, row = latest
+        return jsonify({
+            'path': meta.path,
+            'captured_at': meta.captured_at,
+            'latitude': meta.lat,
+            'longitude': meta.lon,
+            'altitude': meta.alt,
+            'city': meta.city,
+            'admin': meta.admin,
+            'country_code': meta.country_code,
+            'location_slug': (row or {}).get('location_slug'),
+        })
 
     @app.route('/settings', methods=['GET', 'POST'])
     def settings_page():

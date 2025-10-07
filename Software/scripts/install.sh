@@ -81,12 +81,158 @@ echo "Installing Python deps into venv (forcing PyPI for fresh certs)..."
 
 # Make sure OS-level dependencies for hardware are present
 if command -v apt-get >/dev/null 2>&1; then
-  echo "Ensuring OS packages (GPIO/SPI/fonts/ffmpeg/mDNS) are installed..."
+  echo "Ensuring OS packages (GPIO/SPI/fonts/ffmpeg/mDNS/GUI) are installed..."
   sudo apt-get update -y
-  sudo apt-get install -y python3-rpi-lgpio python3-spidev python3-pil ffmpeg fonts-dejavu avahi-daemon || true
+  sudo apt-get install -y \
+    python3-rpi-lgpio \
+    python3-lgpio \
+    python3-spidev \
+    python3-pil \
+    ffmpeg \
+    fonts-dejavu \
+    avahi-daemon \
+    onboard \
+    git \
+    device-tree-compiler \
+    xserver-xorg \
+    xinit \
+    openbox \
+    gstreamer1.0-plugins-base \
+    gstreamer1.0-plugins-good \
+    gstreamer1.0-libav \
+    libgtk-3-0 \
+    libstdc++6 \
+    liblzma5 \
+    libglu1-mesa \
+    weston \
+    xwayland || true
   # NetworkManager for AP-mode (optional)
   sudo apt-get install -y network-manager || true
 fi
+
+configure_hyperpixel() {
+  local CONFIG="/boot/config.txt"
+  local NEED_INSTALL=0
+
+  if ! command -v hyperpixel4-rotate >/dev/null 2>&1; then
+    NEED_INSTALL=1
+  fi
+
+  if [ ! -f "$CONFIG" ] || ! grep -q '^dtoverlay=hyperpixel4' "$CONFIG"; then
+    NEED_INSTALL=1
+  fi
+
+  if [ "$NEED_INSTALL" -eq 0 ]; then
+    echo "HyperPixel 4.0 support already configured."
+    return
+  fi
+
+  if ! command -v git >/dev/null 2>&1; then
+    echo "git not available; install git before configuring HyperPixel." >&2
+    return
+  fi
+
+  local TMP
+  TMP=$(mktemp -d)
+
+  echo "Cloning Pimoroni HyperPixel installer (pi4 branch)..."
+  if ! git clone --depth=1 --branch pi4 https://github.com/pimoroni/hyperpixel4 "$TMP" >/dev/null 2>&1; then
+    echo "WARNING: Failed to clone hyperpixel4 repository." >&2
+    rm -rf "$TMP"
+    return
+  fi
+
+  local CONFIG_PATH="/boot/config.txt"
+  if [ -f /boot/firmware/config.txt ]; then
+    CONFIG_PATH="/boot/firmware/config.txt"
+  fi
+
+  if [ -f "$TMP/install.sh" ]; then
+    sed -i "s|CONFIG=\"/boot/config.txt\"|CONFIG=\"$CONFIG_PATH\"|" "$TMP/install.sh" || true
+  fi
+
+  echo "Running HyperPixel installer (requires sudo)..."
+  if ! (cd "$TMP" && CONFIG="$CONFIG_PATH" sudo ./install.sh); then
+    echo "WARNING: HyperPixel installer reported an error." >&2
+    rm -rf "$TMP"
+    return
+  fi
+
+  rm -rf "$TMP"
+
+  if command -v hyperpixel4-rotate >/dev/null 2>&1; then
+    echo "Setting HyperPixel orientation to landscape (ports on bottom)..."
+    sudo hyperpixel4-rotate left || echo "WARNING: Unable to rotate HyperPixel display automatically." >&2
+  fi
+}
+
+echo "Configuring Pimoroni HyperPixel 4.0 touchscreen..."
+configure_hyperpixel
+
+configure_x11_launcher() {
+  local USERNAME
+  USERNAME="$(id -un)"
+  local HOME_DIR
+  HOME_DIR="$(eval echo "~$USERNAME")"
+  local GROUP_NAME
+  GROUP_NAME="$(id -gn "$USERNAME")"
+  local SERVICE_PATH="/etc/systemd/system/blackbox-flutter.service"
+  local FLUTTER_BIN="/opt/blackbox_flutter/blackbox_flutter"
+  local XINITRC="$HOME_DIR/.xinitrc"
+
+  if [ ! -f "$XINITRC" ]; then
+    cat <<'EOF' > "$XINITRC"
+#!/bin/sh
+export BLACKBOX_BASE_URL=http://127.0.0.1:5000
+xset -dpms
+xset s off
+exec /opt/blackbox_flutter/blackbox_flutter --window-decorator=false --fullscreen
+EOF
+    chmod +x "$XINITRC"
+    echo "Created $XINITRC"
+  else
+    echo "$XINITRC already exists; leaving as-is."
+  fi
+
+  if [ ! -f "$SERVICE_PATH" ]; then
+    sudo tee "$SERVICE_PATH" >/dev/null <<EOF
+[Unit]
+Description=Blackbox Flutter UI (X11)
+After=systemd-user-sessions.service
+Requires=systemd-user-sessions.service
+
+[Service]
+User=$USERNAME
+Group=$GROUP_NAME
+PAMName=login
+Environment=DISPLAY=:0
+Environment=BLACKBOX_BASE_URL=http://127.0.0.1:5000
+WorkingDirectory=$HOME_DIR
+ExecStartPre=/usr/bin/test -x $FLUTTER_BIN
+ExecStart=/usr/bin/startx $XINITRC -- -nocursor -keeptty
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    sudo systemctl daemon-reload
+  else
+    echo "blackbox-flutter.service already exists; leaving as-is."
+  fi
+
+  if [ ! -x "$FLUTTER_BIN" ]; then
+    echo "NOTE: $FLUTTER_BIN not found yet; deploy the Flutter bundle there before boot." >&2
+  fi
+
+  if ! systemctl is-enabled --quiet blackbox-flutter.service 2>/dev/null; then
+    sudo systemctl enable blackbox-flutter.service || true
+  fi
+  sudo systemctl restart blackbox-flutter.service || true
+}
+
+echo "Configuring X11 + Flutter autostart..."
+configure_x11_launcher
 
 # Try to install Waveshare e‑paper library into the venv if missing
 echo "Checking Waveshare e-paper Python lib..."
@@ -154,6 +300,14 @@ fi
 if id -nG "$ME" | grep -vqE '\bfuse\b'; then
   echo "Adding $ME to 'fuse' group (needs sudo)..."
   sudo usermod -aG fuse "$ME" || true
+fi
+if id -nG "$ME" | grep -vqE '\bvideo\b'; then
+  echo "Adding $ME to 'video' group (needs sudo)..."
+  sudo usermod -aG video "$ME" || true
+fi
+if id -nG "$ME" | grep -vqE '\binput\b'; then
+  echo "Adding $ME to 'input' group (needs sudo)..."
+  sudo usermod -aG input "$ME" || true
 fi
 if [ ! -e /dev/spidev0.0 ] && [ ! -e /dev/spidev0.1 ]; then
   echo "WARNING: /dev/spidev0.* not found. Enable SPI via 'sudo raspi-config' (Interface Options → SPI)."

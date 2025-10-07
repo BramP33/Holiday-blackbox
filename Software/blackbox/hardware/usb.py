@@ -134,7 +134,7 @@ class UsbDeviceMonitor:
 
 def _lsblk_tree() -> Dict:
     try:
-        out = subprocess.check_output(['lsblk', '-J', '-o', 'NAME,TYPE,TRAN,MOUNTPOINT,FSTYPE,LABEL'], text=True)
+        out = subprocess.check_output(['lsblk', '-J', '-b', '-o', 'NAME,TYPE,TRAN,MOUNTPOINT,FSTYPE,LABEL,SIZE'], text=True)
         return json.loads(out)
     except Exception:
         return {}
@@ -154,11 +154,17 @@ def usb_partitions() -> List[Dict]:
         typ = (dev.get('type') or '').lower()
         name = dev.get('name')
         if cur_is_usb and typ == 'part' and name:
+            size_raw = dev.get('size')
+            try:
+                size_bytes = int(size_raw)
+            except (TypeError, ValueError):
+                size_bytes = 0
             parts.append({
                 'name': f"/dev/{name}",
                 'mountpoint': dev.get('mountpoint'),
                 'fstype': dev.get('fstype'),
                 'label': dev.get('label'),
+                'size_bytes': size_bytes,
             })
         for ch in (dev.get('children') or []):
             _collect(ch, cur_is_usb)

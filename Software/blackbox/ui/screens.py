@@ -164,6 +164,86 @@ class BackupScreen(ScreenBase):
         return img
 
 
+class LargeDrivePromptScreen(ScreenBase):
+    def __init__(self, width: int, height: int, language: str, device_label: str, estimated_minutes: int):
+        super().__init__(width, height, language)
+        self.device_label = device_label
+        self.estimated_minutes = max(0, int(estimated_minutes))
+
+    def draw(self) -> Image.Image:
+        img = Image.new('1', (self.width, self.height), 1)
+        d = ImageDraw.Draw(img)
+        d.text((8, 6), tr(self.language, 'offload.prompt_title'), font=self.font_h1, fill=0)
+        question = tr(self.language, 'offload.prompt_question', name=self.device_label)
+        d.text((8, 42), question, font=self.font_mid, fill=0)
+        eta = tr(self.language, 'offload.prompt_estimate', minutes=self.estimated_minutes)
+        d.text((8, 60), eta, font=self.font_mid, fill=0)
+        d.text((8, 96), tr(self.language, 'offload.prompt_yes'), font=self.font_big, fill=0)
+        d.text((8, 120), tr(self.language, 'offload.prompt_cancel'), font=self.font_big, fill=0)
+        return img
+
+
+class LargeDriveConfirmScreen(ScreenBase):
+    def draw(self) -> Image.Image:
+        img = Image.new('1', (self.width, self.height), 1)
+        d = ImageDraw.Draw(img)
+        d.text((8, 6), tr(self.language, 'offload.confirm_title'), font=self.font_h1, fill=0)
+        d.text((8, 46), tr(self.language, 'offload.confirm_warning'), font=self.font_mid, fill=0)
+        d.text((8, 96), tr(self.language, 'offload.confirm_yes'), font=self.font_big, fill=0)
+        d.text((8, 120), tr(self.language, 'offload.confirm_cancel'), font=self.font_big, fill=0)
+        return img
+
+
+class LargeDriveProgressScreen(ScreenBase):
+    def __init__(self, width: int, height: int, language: str, device_label: str, trip_name: str, fraction: float, eta_text: str, speed_text: str, files_done: int, files_total: int):
+        super().__init__(width, height, language)
+        self.device_label = device_label
+        self.trip_name = trip_name
+        self.fraction = max(0.0, min(1.0, float(fraction)))
+        self.eta_text = eta_text
+        self.speed_text = speed_text
+        self.files_done = files_done
+        self.files_total = files_total
+
+    def draw(self) -> Image.Image:
+        img = Image.new('1', (self.width, self.height), 1)
+        d = ImageDraw.Draw(img)
+        d.text((8, 6), tr(self.language, 'offload.progress_title', name=self.device_label), font=self.font_h1, fill=0)
+        d.text((8, 38), tr(self.language, 'offload.progress_trip', trip=self.trip_name), font=self.font_mid, fill=0)
+        files_label = tr(self.language, 'offload.progress_files', done=self.files_done, total=self.files_total)
+        d.text((8, 58), files_label, font=self.font_small, fill=0)
+        bar = ProgressBar(self.width-16, 14, 8, 86)
+        bar.draw(d, self.fraction)
+        d.text((8, 106), tr(self.language, 'offload.progress_eta', eta=self.eta_text), font=self.font_small, fill=0)
+        d.text((8, 120), tr(self.language, 'offload.progress_speed', speed=self.speed_text), font=self.font_small, fill=0)
+        d.text((8, self.height-18), tr(self.language, 'offload.progress_cancel_hint'), font=self.font_mid, fill=0)
+        return img
+
+
+class OffloadDoneScreen(ScreenBase):
+    def __init__(self, width: int, height: int, language: str, files_copied: int):
+        super().__init__(width, height, language)
+        self.files_copied = max(0, int(files_copied))
+
+    def draw(self) -> Image.Image:
+        img = Image.new('1', (self.width, self.height), 1)
+        d = ImageDraw.Draw(img)
+        d.text((8, 10), tr(self.language, 'offload.done_title'), font=self.font_h1, fill=0)
+        d.text((8, 48), tr(self.language, 'offload.done_summary', files=self.files_copied), font=self.font_mid, fill=0)
+        d.text((8, self.height-18), tr(self.language, 'common.home'), font=self.font_mid, fill=0)
+        return img
+
+
+class OffloadCancelledScreen(ScreenBase):
+    def draw(self) -> Image.Image:
+        img = Image.new('1', (self.width, self.height), 1)
+        d = ImageDraw.Draw(img)
+        d.text((8, 10), tr(self.language, 'offload.cancelled_title'), font=self.font_h1, fill=0)
+        d.text((8, 48), tr(self.language, 'offload.cancelled_hint'), font=self.font_mid, fill=0)
+        d.text((8, self.height-18), tr(self.language, 'common.home'), font=self.font_mid, fill=0)
+        return img
+
+
 class VerifyScreen(ScreenBase):
     def __init__(self, width: int, height: int, language: str, method: str, progress: float):
         super().__init__(width, height, language)

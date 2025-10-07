@@ -82,8 +82,9 @@ device_labels:
   camera: Camera
 
 hardware:
-  display: epd2in7_v2
+  display: epd2in7_v2  # Set to 'mock' to disable GPIO display output
   orientation: landscape
+  buttons_enabled: false  # Set to true to enable physical GPIO buttons
   buttons:
     # GPIO BCM numbers, top->bottom. Internal pull-ups, active-low.
     - 5

@@ -1,23 +1,48 @@
 from __future__ import annotations
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional
+import math
+import os
+import shutil
 import threading
 import time
+
 import psutil
 from PIL import ImageChops
 
 from .config import load_config
 from .paths import Paths
 from .hardware.display import get_waveshare_display, MockDisplay
-from .ui.screens import HomeScreen, InfoScreen, BackupScreen, VerifyScreen, DoneScreen, WebserverConfirmScreen, WebserverEnabledScreen, SettingsScreen, ErrorScreen, SettingsConfirmScreen, DeviceDetectedScreen, DeviceRemovedScreen, ProxiesScreen, BootScreen
+from .ui.screens import (
+    HomeScreen,
+    InfoScreen,
+    BackupScreen,
+    VerifyScreen,
+    DoneScreen,
+    WebserverConfirmScreen,
+    WebserverEnabledScreen,
+    SettingsScreen,
+    ErrorScreen,
+    SettingsConfirmScreen,
+    DeviceDetectedScreen,
+    DeviceRemovedScreen,
+    ProxiesScreen,
+    BootScreen,
+    LargeDrivePromptScreen,
+    LargeDriveConfirmScreen,
+    LargeDriveProgressScreen,
+    OffloadDoneScreen,
+    OffloadCancelledScreen,
+)
 from .i18n import t as tr
 from .backup.scanner import find_source_mounts
-from .backup.backup import copy_from_source
+from .backup.backup import CopyProgress, copy_from_source
 from .proxies.generate import generate_for_folder
 from .hardware.buttons import Buttons
 from .hardware.power import is_undervoltage
 from .ap_mode import start_ap, stop_ap, get_ap_address
-from .hardware.usb import UsbDeviceMonitor, ensure_usb_mounted
+from .hardware.usb import UsbDeviceMonitor, ensure_usb_mounted, usb_partitions
 from .media.metadata import MediaMetadataIndex
 from .gopro.network import gopro_present
 from .gopro.link import prepare_link, teardown_link
@@ -89,12 +114,410 @@ def render_and_push(disp, screen):
         render_and_push._home_should_partial_next = False
 
 
+LARGE_DRIVE_THRESHOLD_BYTES = 256 * 1_000_000_000
+DEFAULT_OFFLOAD_SPEED_BPS = 90 * 1_000_000
+COPY_CHUNK_SIZE = 8 * 1024 * 1024
+
+
+@dataclass
+class LargeDriveInfo:
+    device_base: str
+    partition: str
+    mountpoint: Path
+    label: str
+    size_bytes: int
+    total_bytes: int
+    total_files: int
+    estimated_seconds: float
+    trip_name: str
+
+
+@dataclass
+class OffloadResult:
+    files_copied: int
+    bytes_copied: int
+    cancelled: bool
+    errors: List[str]
+
+
+class OffloadCancelled(Exception):
+    pass
+
+
 _INDEX_NOW_STATE = {
     'thread': None,
     'status': 'idle',
     'error_code': None,
     'error_detail': None,
 }
+
+
+def _calculate_directory_totals(root: Path) -> tuple[int, int]:
+    total_bytes = 0
+    total_files = 0
+    for dirpath, _, filenames in os.walk(root):
+        for fn in filenames:
+            try:
+                p = Path(dirpath) / fn
+                total_bytes += p.stat().st_size
+                total_files += 1
+            except FileNotFoundError:
+                continue
+            except OSError:
+                continue
+    return total_bytes, total_files
+
+
+def _format_eta(seconds: Optional[float]) -> str:
+    if seconds is None or seconds <= 0:
+        return '0m'
+    if seconds < 60:
+        return '~1m'
+    minutes = seconds / 60.0
+    if minutes < 120:
+        rounded = max(1, int(round(minutes)))
+        return f"~{rounded}m"
+    hours = minutes / 60.0
+    if hours < 10:
+        return f"~{hours:.1f}h"
+    return f"~{int(round(hours))}h"
+
+
+def _format_speed(bytes_per_sec: float) -> str:
+    if bytes_per_sec <= 0:
+        return '0 MB/s'
+    mb = bytes_per_sec / 1_000_000.0
+    if mb >= 100:
+        return f"{mb:.0f} MB/s"
+    return f"{mb:.1f} MB/s"
+
+
+def _detect_large_drive(paths: Paths, monitor: UsbDeviceMonitor, threshold: int = LARGE_DRIVE_THRESHOLD_BYTES) -> Optional[LargeDriveInfo]:
+    inserted = getattr(monitor, 'last_inserted', set()) or set()
+    if not inserted:
+        return None
+    try:
+        ensure_usb_mounted(readonly=False)
+    except Exception:
+        pass
+    partitions = usb_partitions()
+    if not partitions:
+        return None
+
+    try:
+        nvme_resolved = paths.nvme_mount.resolve()
+    except Exception:
+        nvme_resolved = paths.nvme_mount
+
+    trip_root = paths.trip_root()
+    total_bytes, total_files = _calculate_directory_totals(trip_root)
+    trip_name = trip_root.name
+
+    for base in inserted:
+        for part in partitions:
+            name = part.get('name') or ''
+            if not name or not name.startswith(base):
+                continue
+            try:
+                size_bytes = int(part.get('size_bytes') or 0)
+            except (TypeError, ValueError):
+                size_bytes = 0
+            if size_bytes < threshold:
+                continue
+            mountpoint = part.get('mountpoint')
+            if not mountpoint:
+                continue
+            try:
+                mp = Path(mountpoint)
+            except Exception:
+                continue
+            try:
+                if nvme_resolved and mp.resolve() == nvme_resolved:
+                    continue
+            except Exception:
+                pass
+            label_raw = part.get('label') or ''
+            label = label_raw.strip() or mp.name or name.replace('/dev/', '')
+            estimated_seconds = (total_bytes / DEFAULT_OFFLOAD_SPEED_BPS) if total_bytes else 0.0
+            return LargeDriveInfo(
+                device_base=base,
+                partition=name,
+                mountpoint=mp,
+                label=label,
+                size_bytes=size_bytes,
+                total_bytes=total_bytes,
+                total_files=total_files,
+                estimated_seconds=estimated_seconds,
+                trip_name=trip_name,
+            )
+    return None
+
+
+def _perform_offload(
+    trip_root: Path,
+    dest_root: Path,
+    buttons: Buttons,
+    dev_mode: bool,
+    total_bytes: int,
+    total_files: int,
+    progress_cb,
+) -> OffloadResult:
+    bytes_copied = 0
+    files_copied = 0
+    errors: List[str] = []
+    cancelled = False
+
+    cancel_state = {'last': [False, False, False, False]}
+
+    def should_cancel() -> bool:
+        if dev_mode:
+            return False
+        st = buttons.read()
+        if st is None:
+            return False
+        # Ensure we copy since GPIO may return tuples reused between calls
+        st_list = list(st)
+        last = cancel_state['last']
+        cancel = st_list[1] and not last[1]
+        cancel_state['last'] = st_list
+        return cancel
+
+    if not dest_root.exists():
+        dest_root.mkdir(parents=True, exist_ok=True)
+
+    try:
+        for dirpath, _, filenames in os.walk(trip_root):
+            for fn in filenames:
+                src = Path(dirpath) / fn
+                try:
+                    rel = src.relative_to(trip_root)
+                except ValueError:
+                    rel = Path(fn)
+                dst = dest_root / rel
+                dst.parent.mkdir(parents=True, exist_ok=True)
+
+                file_bytes_written = 0
+                try:
+                    with src.open('rb') as fsrc, dst.open('wb') as fdst:
+                        while True:
+                            if should_cancel():
+                                bytes_copied = max(0, bytes_copied - file_bytes_written)
+                                raise OffloadCancelled
+                            chunk = fsrc.read(COPY_CHUNK_SIZE)
+                            if not chunk:
+                                break
+                            fdst.write(chunk)
+                            written = len(chunk)
+                            file_bytes_written += written
+                            bytes_copied += written
+                            progress_cb(bytes_copied, files_copied, total_bytes, total_files)
+                        fdst.flush()
+                        try:
+                            os.fsync(fdst.fileno())
+                        except OSError:
+                            pass
+                    shutil.copystat(src, dst, follow_symlinks=True)
+                    files_copied += 1
+                    progress_cb(bytes_copied, files_copied, total_bytes, total_files, force=True)
+                except OffloadCancelled:
+                    cancelled = True
+                    try:
+                        if dst.exists():
+                            dst.unlink()
+                    except Exception:
+                        pass
+                    raise
+                except Exception as e:
+                    bytes_copied = max(0, bytes_copied - file_bytes_written)
+                    try:
+                        if dst.exists():
+                            dst.unlink()
+                    except Exception:
+                        pass
+                    errors.append(f"{rel}: {e}")
+                    progress_cb(bytes_copied, files_copied, total_bytes, total_files, force=True)
+    except OffloadCancelled:
+        cancelled = True
+
+    return OffloadResult(files_copied=files_copied, bytes_copied=bytes_copied, cancelled=cancelled, errors=errors)
+
+
+def _confirm_large_drive(disp, buttons: Buttons, dev_mode: bool, monitor: UsbDeviceMonitor, lang: str) -> bool:
+    render_and_push(disp, LargeDriveConfirmScreen(disp.width, disp.height, lang))
+    if dev_mode:
+        return True
+    import time as _t
+    last = [False, False, False, False]
+    while True:
+        st = buttons.read() or [False, False, False, False]
+        if st[0] and not last[0]:
+            return True
+        if (st[1] and not last[1]) or (st[3] and not last[3]):
+            return False
+        evt = monitor.poll()
+        if evt == 'remove':
+            return False
+        last = st
+        _t.sleep(0.05)
+
+
+def _execute_large_drive_offload(
+    disp,
+    cfg,
+    paths: Paths,
+    buttons: Buttons,
+    dev_mode: bool,
+    lang: str,
+    info: LargeDriveInfo,
+) -> None:
+    trip_root = paths.trip_root()
+    total_bytes = info.total_bytes
+    total_files = info.total_files
+
+    if total_files <= 0 or total_bytes <= 0:
+        render_and_push(disp, ErrorScreen(disp.width, disp.height, lang, tr(lang, 'offload.errors.no_media')))
+        _wait_for_home(buttons, dev_mode)
+        return
+
+    if not info.mountpoint.exists():
+        msg = tr(lang, 'offload.errors.mount_failed', name=info.label)
+        render_and_push(disp, ErrorScreen(disp.width, disp.height, lang, msg))
+        _wait_for_home(buttons, dev_mode)
+        return
+
+    try:
+        usage = psutil.disk_usage(str(info.mountpoint))
+    except Exception:
+        usage = None
+    if usage and usage.free < total_bytes:
+        msg = tr(lang, 'offload.errors.no_space', name=info.label)
+        render_and_push(disp, ErrorScreen(disp.width, disp.height, lang, msg))
+        _wait_for_home(buttons, dev_mode)
+        return
+
+    dest_root = info.mountpoint / 'Blackbox' / 'trips' / info.trip_name
+    start_time = time.monotonic()
+    last_draw = [0.0]
+
+    def progress_cb(bytes_copied: int, files_done: int, total_bytes: int, total_files: int, force: bool = False) -> None:
+        now = time.monotonic()
+        if not force and (now - last_draw[0]) < 0.5:
+            return
+        last_draw[0] = now
+        fraction = (bytes_copied / total_bytes) if total_bytes > 0 else 0.0
+        elapsed = max(now - start_time, 0.001)
+        if bytes_copied <= 0:
+            eta_seconds = info.estimated_seconds if info.total_bytes > 0 else 0.0
+            speed_text = '--'
+        else:
+            speed = bytes_copied / elapsed
+            speed_text = _format_speed(speed)
+            remaining = max(total_bytes - bytes_copied, 0)
+            eta_seconds = remaining / speed if speed > 1e-6 else None
+        eta_text = _format_eta(eta_seconds)
+        render_and_push(
+            disp,
+            LargeDriveProgressScreen(
+                disp.width,
+                disp.height,
+                lang,
+                info.label,
+                info.trip_name,
+                fraction,
+                eta_text,
+                speed_text,
+                files_done,
+                total_files,
+            ),
+        )
+
+    progress_cb(0, 0, total_bytes, total_files, force=True)
+    result = _perform_offload(trip_root, dest_root, buttons, dev_mode, total_bytes, total_files, progress_cb)
+    progress_cb(result.bytes_copied, result.files_copied, total_bytes, total_files, force=True)
+
+    if result.cancelled:
+        render_and_push(disp, OffloadCancelledScreen(disp.width, disp.height, lang))
+        _wait_for_home(buttons, dev_mode)
+        return
+
+    if result.errors:
+        msg = result.errors[0]
+        render_and_push(disp, ErrorScreen(disp.width, disp.height, lang, msg))
+        _wait_for_home(buttons, dev_mode)
+        return
+
+    render_and_push(disp, OffloadDoneScreen(disp.width, disp.height, lang, result.files_copied))
+    _wait_for_home(buttons, dev_mode)
+
+
+def _handle_large_drive(
+    disp,
+    cfg,
+    paths: Paths,
+    buttons: Buttons,
+    dev_mode: bool,
+    monitor: UsbDeviceMonitor,
+    lang: str,
+    info: LargeDriveInfo,
+) -> None:
+    estimated_minutes = 0
+    if info.total_bytes > 0:
+        estimated_minutes = max(1, int(math.ceil(info.estimated_seconds / 60.0))) if info.estimated_seconds > 0 else 1
+    render_and_push(disp, LargeDrivePromptScreen(disp.width, disp.height, lang, info.label, estimated_minutes))
+
+    if dev_mode:
+        monitor.suppress_last_inserts()
+        monitor.enter_cooldown(1.0)
+        _execute_large_drive_offload(disp, cfg, paths, buttons, dev_mode, lang, info)
+        return
+
+    import time as _t
+    last = [False, False, False, False]
+    while True:
+        st = buttons.read() or [False, False, False, False]
+        if st[0] and not last[0]:
+            confirmed = _confirm_large_drive(disp, buttons, dev_mode, monitor, lang)
+            if confirmed:
+                monitor.suppress_last_inserts()
+                monitor.enter_cooldown(1.0)
+                _execute_large_drive_offload(disp, cfg, paths, buttons, dev_mode, lang, info)
+            else:
+                monitor.suppress_last_inserts()
+                monitor.enter_cooldown(1.0)
+            break
+        if st[1] and not last[1]:
+            monitor.suppress_last_inserts()
+            monitor.enter_cooldown(1.0)
+            break
+        if st[3] and not last[3]:
+            monitor.suppress_last_inserts()
+            monitor.enter_cooldown(1.0)
+            break
+        evt = monitor.poll()
+        if evt == 'remove':
+            render_and_push(disp, DeviceRemovedScreen(disp.width, disp.height, lang))
+            _wait_for_home(buttons, dev_mode)
+            monitor.resync()
+            monitor.enter_cooldown(1.0)
+            break
+        last = st
+        _t.sleep(0.05)
+
+
+def _maybe_handle_large_drive_event(
+    disp,
+    cfg,
+    paths: Paths,
+    buttons: Buttons,
+    dev_mode: bool,
+    monitor: UsbDeviceMonitor,
+    lang: str,
+) -> bool:
+    info = _detect_large_drive(paths, monitor)
+    if not info:
+        return False
+    _handle_large_drive(disp, cfg, paths, buttons, dev_mode, monitor, lang, info)
+    return True
 
 
 def run_manual_backup(disp, cfg, paths, buttons: Buttons, dev_mode: bool):
@@ -158,10 +581,10 @@ def run_manual_backup(disp, cfg, paths, buttons: Buttons, dev_mode: bool):
     # Do copy with progress callback updating the bar
     total_seen = {'total': 1, 'i': 0}
 
-    def progress_cb(i, total):
-        total_seen['i'] = i
-        total_seen['total'] = max(total_seen['total'], total)
-        frac = i / float(total_seen['total']) if total_seen['total'] else 0
+    def progress_cb(progress: CopyProgress):
+        total_seen['i'] = progress.index
+        total_seen['total'] = max(total_seen['total'], progress.total)
+        frac = progress.index / float(total_seen['total']) if total_seen['total'] else 0
         render_and_push(
             disp,
             BackupScreen(
@@ -262,9 +685,10 @@ def run_gopro_import(disp, cfg, paths, buttons: Buttons, dev_mode: bool):
     def http_progress(done: int, total: int, fraction: float, name: str) -> None:
         _update_progress(fraction, name)
 
-    def mtp_progress(i: int, total: int) -> None:
-        fraction = i / total if total else 0.0
-        _update_progress(fraction)
+    def mtp_progress(progress: CopyProgress) -> None:
+        total = progress.total
+        fraction = progress.index / total if total else 0.0
+        _update_progress(fraction, progress.current_path.name if progress.current_path else None)
 
     result = import_media_mtp(paths, verify_mode=verify_mode, progress_cb=mtp_progress)
 
@@ -480,8 +904,20 @@ def _menu_select(disp, buttons: Buttons, sel: int, dev_mode: bool, monitor: UsbD
 def run(dev_mode: bool = True):
     cfg = load_config()
     paths = Paths(cfg).ensure()
-    disp = MockDisplay() if dev_mode else get_waveshare_display()
-    buttons = Buttons(pins=cfg.get('hardware',{}).get('buttons',[5,6,13,19]), dev_mode=dev_mode)
+    hardware_cfg = cfg.get('hardware', {})
+    display_mode = (hardware_cfg.get('display') or 'epd2in7_v2').lower()
+
+    use_mock_display = dev_mode or display_mode in {'mock', 'none', 'disabled'}
+
+    if use_mock_display:
+        disp = MockDisplay()
+    else:
+        disp = get_waveshare_display()
+    buttons = Buttons(
+        pins=hardware_cfg.get('buttons', [5, 6, 13, 19]),
+        dev_mode=dev_mode,
+        enabled=hardware_cfg.get('buttons_enabled', False),
+    )
     monitor = UsbDeviceMonitor()
     # Show a simple boot screen briefly on startup
     try:
@@ -501,6 +937,9 @@ def run(dev_mode: bool = True):
         # Check hotplug events immediately on entering Home
         evt = monitor.poll()
         if evt == 'insert':
+            if _maybe_handle_large_drive_event(disp, cfg, paths, buttons, dev_mode, monitor, lang):
+                render_and_push(disp, HomeScreen(disp.width, disp.height, lang, selected=sel))
+                continue
             # Show detection notice; 1=start backup, 4=dismiss
             render_and_push(disp, DeviceDetectedScreen(disp.width, disp.height, lang))
             if not dev_mode:
@@ -568,6 +1007,9 @@ def run(dev_mode: bool = True):
             render_and_push(disp, HomeScreen(disp.width, disp.height, selected=sel))
         sel = _menu_select(disp, buttons, sel, dev_mode, monitor=monitor, poll_interval_s=0.5, lang=lang)
         if sel == -1:
+            if _maybe_handle_large_drive_event(disp, cfg, paths, buttons, dev_mode, monitor, lang):
+                render_and_push(disp, HomeScreen(disp.width, disp.height, lang, selected=sel))
+                continue
             render_and_push(disp, DeviceDetectedScreen(disp.width, disp.height, lang))
             if not dev_mode:
                 import time as _t

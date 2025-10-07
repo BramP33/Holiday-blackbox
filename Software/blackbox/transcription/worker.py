@@ -16,7 +16,7 @@ except ImportError:  # pragma: no cover - optional dependency
 from ..config import load_config
 from ..paths import Paths
 from .queue import TranscriptionQueue
-from .semantic import SemanticModelUnavailable, available as semantic_available, encode_text
+from .semantic import SemanticModelUnavailable, available as semantic_available, encode_queries, encode_text
 
 try:
     from faster_whisper import WhisperModel
@@ -280,6 +280,55 @@ class TranscriptionWorker:
             return self._keywords_sentence_transformer(text)
         return self._keywords_frequency(text)
 
+    def _backfill_semantic_embeddings(self) -> bool:
+        if not self._semantic_enabled or not semantic_available() or _np is None:
+            return False
+        if not hasattr(self._queue, 'iter_missing_embeddings') or not hasattr(self._queue, 'store_embedding'):
+            return False
+        try:
+            batch_size = max(1, int(self._semantic_cfg.get('backfill_batch', 16)))
+        except (TypeError, ValueError):
+            batch_size = 16
+        try:
+            pending: List[Tuple[str, str]] = []
+            iterator = self._queue.iter_missing_embeddings(model=self._semantic_model_id)  # type: ignore[attr-defined]
+            for rel_path, text in iterator:
+                cleaned = (text or '').strip()
+                if not cleaned:
+                    continue
+                pending.append((rel_path, cleaned))
+                if len(pending) >= batch_size:
+                    break
+        except Exception:
+            return False
+        if not pending:
+            return False
+        try:
+            vectors = encode_queries(
+                [text for _, text in pending],
+                model_id=self._semantic_model_id,
+                device=self._semantic_device,
+                normalize=True,
+            )
+        except (SemanticModelUnavailable, ValueError):
+            return False
+        except Exception:
+            return False
+        success = False
+        for (rel_path, _), vec in zip(pending, vectors):
+            try:
+                arr = _np.asarray(vec, dtype=_np.float32)
+            except Exception:
+                continue
+            if arr.size == 0:
+                continue
+            try:
+                self._queue.store_embedding(rel_path, arr.tobytes(), self._semantic_model_id)  # type: ignore[attr-defined]
+                success = True
+            except Exception:
+                continue
+        return success
+
     # -- transcription ---------------------------------------------------
     def _run_transcription(self, path: Path) -> Tuple[str, List[Dict[str, float]], Optional[str], Optional[float], str]:
         model = self._load_transcriber()
@@ -329,6 +378,9 @@ class TranscriptionWorker:
     def process_next(self) -> bool:
         job = self._queue.next_pending()
         if not job:
+            if self._backfill_semantic_embeddings():
+                time.sleep(0.1)
+                return True
             return False
         rel = job['path']
         path = self._root / rel
@@ -372,6 +424,7 @@ class TranscriptionWorker:
                 embedding_model=embedding_model_id,
             )
             _LOG.info('Completed transcription for %s (%d segments)', rel, len(segments))
+            self._backfill_semantic_embeddings()
         except MissingDependencyError as exc:
             message = f'missing_dependency: {exc}'
             self._queue.mark_error(rel, message)

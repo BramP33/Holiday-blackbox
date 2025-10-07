@@ -29,6 +29,17 @@ class CopyResult:
     errors: List[str]
 
 
+@dataclass
+class CopyProgress:
+    index: int
+    total: int
+    copied_files: int
+    skipped_files: int
+    replaced_files: int
+    bytes_copied: int
+    current_path: Path | None = None
+
+
 def sha256sum(path: Path) -> str:
     h = hashlib.sha256()
     with open(path, 'rb') as f:
@@ -65,7 +76,7 @@ def copy_from_source(
     source_root: Path,
     paths: Paths,
     verify_mode: str = 'fast',
-    progress_cb: Optional[Callable[[int, int], None]] = None,
+    progress_cb: Optional[Callable[[CopyProgress], None]] = None,
     *,
     allowed_exts: Optional[Iterable[str]] = None,
     min_timestamp: Optional[float] = None,
@@ -127,8 +138,6 @@ def copy_from_source(
                             metadata_index.ensure_for_path(dst)
                         except Exception:
                             pass
-                    if progress_cb:
-                        progress_cb(i, total)
                     continue
                 # replace
                 shutil.copy2(src, dst)
@@ -171,6 +180,16 @@ def copy_from_source(
             errors.append(f'Error copying {src}: {e}')
         finally:
             if progress_cb:
-                progress_cb(i, total)
+                progress_cb(
+                    CopyProgress(
+                        index=i,
+                        total=total,
+                        copied_files=copied,
+                        skipped_files=skipped,
+                        replaced_files=replaced,
+                        bytes_copied=bytes_copied,
+                        current_path=src,
+                    )
+                )
 
     return CopyResult(copied, skipped, replaced, bytes_copied, device_label, errors)

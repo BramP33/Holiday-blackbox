@@ -8,3 +8,4 @@ reverse_geocoder>=1.5
 geopy>=2.4
 geonamescache>=1.5
 faster-whisper>=1.0
+

@@ -1,0 +1,50 @@
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+
+import 'l10n/app_localizations.dart';
+import 'layout.dart';
+import 'screens/boot_screen.dart';
+import 'state/providers.dart';
+import 'theme.dart';
+
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  SystemChrome.setPreferredOrientations(const [
+    DeviceOrientation.landscapeLeft,
+    DeviceOrientation.landscapeRight,
+  ]);
+  SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+  runApp(const ProviderScope(child: BlackboxApp()));
+}
+
+class BlackboxApp extends ConsumerWidget {
+  const BlackboxApp({super.key});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final locale = ref.watch(localeProvider);
+    return MaterialApp(
+      locale: locale,
+      supportedLocales: AppLocalizations.supportedLocales,
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      onGenerateTitle: (context) => context.tr('app.title'),
+      theme: AppTheme.build(),
+      home: const BootScreen(),
+      builder: (context, child) {
+        if (child == null) return const SizedBox.shrink();
+        final mediaQuery = MediaQuery.of(context);
+        final textScale = ScreenLayout.textScaleForSize(mediaQuery.size);
+        final padding = mediaQuery.padding.copyWith(top: 0);
+        return MediaQuery(
+          data: mediaQuery.copyWith(
+            textScaler: TextScaler.linear(textScale),
+            padding: padding,
+          ),
+          child: child,
+        );
+      },
+      debugShowCheckedModeBanner: false,
+    );
+  }
+}

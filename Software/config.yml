@@ -45,8 +45,9 @@ device_labels:
   lumix_g7: Lumix G7
   camera: Camera
 hardware:
-  display: epd2in7_v2
+  display: mock
   orientation: landscape
+  buttons_enabled: false
   buttons:
   - 5
   - 6

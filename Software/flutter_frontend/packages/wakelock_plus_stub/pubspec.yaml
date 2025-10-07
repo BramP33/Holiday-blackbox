@@ -1,0 +1,15 @@
+name: wakelock_plus
+version: 0.0.1
+publish_to: none
+description: Stub wakelock_plus implementation used on Blackbox Pi builds.
+environment:
+  sdk: ">=3.3.0 <4.0.0"
+
+# No dependencies to avoid pulling platform plugins.
+dependencies:
+  flutter:
+    sdk: flutter
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter

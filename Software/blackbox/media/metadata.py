@@ -11,12 +11,17 @@ import threading
 from dataclasses import dataclass
 from fractions import Fraction
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Sequence
+from typing import Any, Dict, Iterable, List, Optional, Sequence
 
 try:
     import numpy as _np
 except ImportError:  # pragma: no cover - optional dependency
     _np = None
+
+try:
+    from annoy import AnnoyIndex as _AnnoyIndex
+except ImportError:  # pragma: no cover - optional dependency
+    _AnnoyIndex = None
 
 from .geocode import GeoResolver, GeoResult
 from ..transcription.queue import TranscriptionQueue
@@ -24,6 +29,45 @@ from ..transcription.semantic import SemanticModelUnavailable, available as sema
 
 
 _VIDEO_EXTS = {'.mp4', '.mov', '.m4v'}
+
+
+_MONTH_ALIASES = {
+    'jan': '01', 'january': '01',
+    'feb': '02', 'february': '02',
+    'mar': '03', 'march': '03',
+    'apr': '04', 'april': '04',
+    'may': '05',
+    'jun': '06', 'june': '06',
+    'jul': '07', 'july': '07',
+    'aug': '08', 'august': '08',
+    'sep': '09', 'sept': '09', 'september': '09',
+    'oct': '10', 'october': '10',
+    'nov': '11', 'november': '11',
+    'dec': '12', 'december': '12',
+}
+
+
+def _tokenize_query(text: str) -> List[str]:
+    return [tok for tok in re.split(r'[\s,;]+', text) if tok]
+
+
+def _split_date_parts(token: str) -> Optional[tuple[str, str, str]]:
+    parts = re.split(r'[-_/\\. ]+', token)
+    if len(parts) != 3:
+        return None
+    if len(parts[0]) == 4 and parts[0].isdigit():
+        year, month, day = parts
+        if len(month) == 1:
+            month = f'0{month}'
+        if len(day) == 1:
+            day = f'0{day}'
+        if month.isdigit() and day.isdigit():
+            try:
+                dt.datetime(int(year), int(month), int(day))
+            except ValueError:
+                return None
+            return year, month, day
+    return None
 
 
 def _run_ffprobe(path: Path) -> Optional[Dict]:
@@ -201,6 +245,211 @@ class LocationSuggestion:
     last_mtime: float
 
 
+class _SemanticANNIndex:
+    """Manage Annoy-based semantic search indexes per embedding model."""
+
+    def __init__(self, meta_dir: Path) -> None:
+        self._meta_dir = meta_dir
+        self._index_dir = meta_dir / 'semantic_index'
+        self._index_dir.mkdir(parents=True, exist_ok=True)
+        self._lock = threading.Lock()
+        self._index_cache: Dict[str, Optional['_AnnoyWrapper']] = {}
+        self._paths_cache: Dict[str, List[str]] = {}
+        self._meta_cache: Dict[str, Dict[str, Any]] = {}
+        self._building: Dict[str, bool] = {}
+
+    def _model_key(self, model_id: str) -> str:
+        safe = re.sub(r'[^a-zA-Z0-9]+', '_', model_id or 'default').strip('_')
+        return safe or 'default'
+
+    def _index_path(self, key: str) -> Path:
+        return self._index_dir / f'{key}.ann'
+
+    def _meta_path(self, key: str) -> Path:
+        return self._index_dir / f'{key}.json'
+
+    def _load_meta_from_disk(self, key: str) -> Optional[Dict[str, Any]]:
+        path = self._meta_path(key)
+        if not path.exists():
+            return None
+        try:
+            data = json.loads(path.read_text())
+        except Exception:
+            return None
+        return data
+
+    def _save_meta_to_disk(self, key: str, data: Dict[str, Any]) -> None:
+        try:
+            self._meta_path(key).write_text(json.dumps(data))
+        except Exception:
+            pass
+
+    def _load_index_into_cache(self, key: str, dim: int) -> Optional['_AnnoyWrapper']:
+        if _AnnoyIndex is None:
+            return None
+        index_path = self._index_path(key)
+        if not index_path.exists():
+            return None
+        try:
+            index = _AnnoyIndex(dim, 'angular')
+            index.load(str(index_path))
+        except Exception:
+            return None
+        wrapper = _AnnoyWrapper(index)
+        self._index_cache[key] = wrapper
+        return wrapper
+
+    def _current_db_mtime(self, queue: TranscriptionQueue) -> float:
+        db_path = getattr(queue, '_db_path', None)
+        if isinstance(db_path, Path) and db_path.exists():
+            try:
+                return db_path.stat().st_mtime
+            except OSError:
+                return 0.0
+        return 0.0
+
+    def _ensure_ready(self, queue: TranscriptionQueue, model_id: str) -> Optional['_AnnoyWrapper']:
+        if _AnnoyIndex is None:
+            return None
+        key = self._model_key(model_id)
+        db_mtime = self._current_db_mtime(queue)
+        with self._lock:
+            meta = self._meta_cache.get(key)
+            if meta is None:
+                meta = self._load_meta_from_disk(key)
+                if meta is not None:
+                    self._meta_cache[key] = meta
+            wrapper = self._index_cache.get(key)
+            if meta and wrapper and abs(meta.get('db_mtime', 0.0) - db_mtime) < 0.1:
+                return wrapper
+            if meta and not wrapper:
+                dim = int(meta.get('dim') or 0)
+                if dim > 0:
+                    wrapper = self._load_index_into_cache(key, dim)
+                    if wrapper:
+                        self._paths_cache[key] = list(meta.get('paths') or [])
+            if meta and wrapper and abs(meta.get('db_mtime', 0.0) - db_mtime) < 0.1:
+                return wrapper
+            if self._building.get(key):
+                return wrapper
+            self._building[key] = True
+        thread = threading.Thread(
+            target=self._build_index,
+            args=(queue, model_id, key, db_mtime),
+            daemon=True,
+        )
+        thread.start()
+        with self._lock:
+            return self._index_cache.get(key)
+
+    def _build_index(self, queue: TranscriptionQueue, model_id: str, key: str, db_mtime: float) -> None:
+        if _np is None or _AnnoyIndex is None:
+            with self._lock:
+                self._index_cache[key] = None
+                self._paths_cache[key] = []
+                self._meta_cache[key] = {
+                    'model_id': model_id,
+                    'db_mtime': db_mtime,
+                    'dim': 0,
+                    'paths': [],
+                }
+                self._building[key] = False
+            self._save_meta_to_disk(key, self._meta_cache[key])
+            return
+        try:
+            embeddings: List[tuple[str, _np.ndarray]] = []
+            for rel_path, blob, model in queue.iter_embeddings(model=model_id):
+                if blob is None:
+                    continue
+                if model and model != model_id:
+                    continue
+                try:
+                    vec = _np.frombuffer(blob, dtype=_np.float32)
+                except Exception:
+                    continue
+                if vec.size == 0:
+                    continue
+                embeddings.append((rel_path, vec.copy()))
+        except Exception:
+            embeddings = []
+
+        if not embeddings:
+            with self._lock:
+                self._index_cache[key] = None
+                self._paths_cache[key] = []
+                self._meta_cache[key] = {
+                    'model_id': model_id,
+                    'db_mtime': db_mtime,
+                    'dim': 0,
+                    'paths': [],
+                }
+                self._building[key] = False
+            self._save_meta_to_disk(key, self._meta_cache[key])
+            return
+
+        dim = embeddings[0][1].size
+        index = _AnnoyIndex(dim, 'angular')
+        paths: List[str] = []
+        for idx, (rel_path, vec) in enumerate(embeddings):
+            try:
+                index.add_item(idx, vec.tolist())
+            except Exception:
+                continue
+            paths.append(rel_path)
+
+        try:
+            index.build(20)
+            index.save(str(self._index_path(key)))
+        except Exception:
+            pass
+
+        wrapper = _AnnoyWrapper(index)
+        meta = {
+            'model_id': model_id,
+            'db_mtime': db_mtime,
+            'dim': dim,
+            'paths': paths,
+        }
+        self._save_meta_to_disk(key, meta)
+        with self._lock:
+            self._index_cache[key] = wrapper
+            self._paths_cache[key] = paths
+            self._meta_cache[key] = meta
+            self._building[key] = False
+
+    def query(self, queue: TranscriptionQueue, model_id: str, query_vec: _np.ndarray, top_k: int = 50) -> List[tuple[str, float]]:
+        if _AnnoyIndex is None or _np is None:
+            return []
+        wrapper = self._ensure_ready(queue, model_id)
+        if wrapper is None:
+            return []
+        key = self._model_key(model_id)
+        with self._lock:
+            paths = self._paths_cache.get(key, [])
+        if not paths:
+            return []
+        try:
+            idxs, distances = wrapper.get_nns(query_vec, top_k)
+        except Exception:
+            return []
+        results: List[tuple[str, float]] = []
+        for idx, dist in zip(idxs, distances):
+            if 0 <= idx < len(paths):
+                cosine = max(-1.0, min(1.0, 1.0 - 0.5 * (dist ** 2)))
+                results.append((paths[idx], cosine))
+        return results
+
+
+class _AnnoyWrapper:
+    """Small wrapper to isolate Annoy-specific calls for typing."""
+
+    def __init__(self, index: Any) -> None:
+        self._index = index
+
+    def get_nns(self, vector: _np.ndarray, top_k: int) -> tuple[List[int], List[float]]:
+        ids, distances = self._index.get_nns_by_vector(vector.tolist(), top_k, include_distances=True)
+        return ids, distances
+
 class MediaMetadataIndex:
     """Store and query metadata for media files within the active trip."""
 
@@ -216,6 +465,10 @@ class MediaMetadataIndex:
         trip_name = str(((paths.cfg or {}).get('trip') or {}).get('name', '')).strip()
         self._trip_words = {w.lower() for w in re.split(r'\W+', trip_name) if w}
         self._transcription_queue: Optional[TranscriptionQueue] = None
+        self._parts_cache: Dict[str, Dict[str, Optional[str]]] = {}
+        self._fts_checked = False
+        self._fts_supported = True
+        self._semantic_ann = _SemanticANNIndex(self._meta_dir)
 
     # -- database helpers -------------------------------------------------
     def _conn_or_open(self) -> sqlite3.Connection:
@@ -244,13 +497,20 @@ class MediaMetadataIndex:
             ' duration_sec REAL,'
             ' camera_make TEXT,'
             ' camera_model TEXT,'
-            ' has_gps INTEGER NOT NULL DEFAULT 0'
+            ' has_gps INTEGER NOT NULL DEFAULT 0,'
+            ' captured_date TEXT,'
+            ' captured_year TEXT,'
+            ' captured_month TEXT,'
+            ' captured_day TEXT,'
+            ' path_date TEXT,'
+            ' path_year TEXT,'
+            ' path_month TEXT,'
+            ' path_day TEXT,'
+            ' location_slug TEXT,'
+            ' filename TEXT,'
+            ' path_tokens TEXT'
             ')'  # noqa: E122
         )
-        cur.execute('CREATE INDEX IF NOT EXISTS idx_videos_city ON videos(city)')
-        cur.execute('CREATE INDEX IF NOT EXISTS idx_videos_country ON videos(country_code)')
-        conn.commit()
-
         # Backfill missing columns for older schemas
         cols = {row['name'] for row in cur.execute('PRAGMA table_info(videos)')}
         migrations = []
@@ -260,10 +520,66 @@ class MediaMetadataIndex:
             migrations.append('ALTER TABLE videos ADD COLUMN camera_make TEXT')
         if 'camera_model' not in cols:
             migrations.append('ALTER TABLE videos ADD COLUMN camera_model TEXT')
+        if 'captured_date' not in cols:
+            migrations.append('ALTER TABLE videos ADD COLUMN captured_date TEXT')
+        if 'captured_year' not in cols:
+            migrations.append('ALTER TABLE videos ADD COLUMN captured_year TEXT')
+        if 'captured_month' not in cols:
+            migrations.append('ALTER TABLE videos ADD COLUMN captured_month TEXT')
+        if 'captured_day' not in cols:
+            migrations.append('ALTER TABLE videos ADD COLUMN captured_day TEXT')
+        if 'path_date' not in cols:
+            migrations.append('ALTER TABLE videos ADD COLUMN path_date TEXT')
+        if 'path_year' not in cols:
+            migrations.append('ALTER TABLE videos ADD COLUMN path_year TEXT')
+        if 'path_month' not in cols:
+            migrations.append('ALTER TABLE videos ADD COLUMN path_month TEXT')
+        if 'path_day' not in cols:
+            migrations.append('ALTER TABLE videos ADD COLUMN path_day TEXT')
+        if 'location_slug' not in cols:
+            migrations.append('ALTER TABLE videos ADD COLUMN location_slug TEXT')
+        if 'filename' not in cols:
+            migrations.append('ALTER TABLE videos ADD COLUMN filename TEXT')
+        if 'path_tokens' not in cols:
+            migrations.append('ALTER TABLE videos ADD COLUMN path_tokens TEXT')
         for statement in migrations:
             cur.execute(statement)
         if migrations:
             conn.commit()
+
+        cur.execute('CREATE INDEX IF NOT EXISTS idx_videos_city ON videos(city)')
+        cur.execute('CREATE INDEX IF NOT EXISTS idx_videos_country ON videos(country_code)')
+        cur.execute('CREATE INDEX IF NOT EXISTS idx_videos_captured_date ON videos(captured_date)')
+        cur.execute('CREATE INDEX IF NOT EXISTS idx_videos_captured_year ON videos(captured_year)')
+        cur.execute('CREATE INDEX IF NOT EXISTS idx_videos_captured_month ON videos(captured_month)')
+        cur.execute('CREATE INDEX IF NOT EXISTS idx_videos_captured_day ON videos(captured_day)')
+        cur.execute('CREATE INDEX IF NOT EXISTS idx_videos_path_date ON videos(path_date)')
+        cur.execute('CREATE INDEX IF NOT EXISTS idx_videos_path_year ON videos(path_year)')
+        cur.execute('CREATE INDEX IF NOT EXISTS idx_videos_path_month ON videos(path_month)')
+        cur.execute('CREATE INDEX IF NOT EXISTS idx_videos_path_day ON videos(path_day)')
+        cur.execute('CREATE INDEX IF NOT EXISTS idx_videos_location_slug ON videos(location_slug)')
+        cur.execute('CREATE INDEX IF NOT EXISTS idx_videos_filename ON videos(filename)')
+        conn.commit()
+
+        try:
+            cur.execute(
+                'CREATE VIRTUAL TABLE IF NOT EXISTS videos_fts USING fts5('
+                'path UNINDEXED,'
+                'city,'
+                'admin,'
+                'country_code,'
+                'camera_make,'
+                'camera_model,'
+                'filename,'
+                'path_tokens,'
+                'location_slug,'
+                "content=''"
+                ')'
+            )
+        except sqlite3.OperationalError:
+            self._fts_supported = False
+        except sqlite3.Error:
+            self._fts_supported = False
 
     # -- metadata extraction ----------------------------------------------
     def _extract_video(self, path: Path) -> Optional[VideoMetadata]:
@@ -382,6 +698,161 @@ class MediaMetadataIndex:
         except Exception:
             return None
 
+    def _clear_parts_cache(self, rel_path: str) -> None:
+        self._parts_cache.pop(rel_path, None)
+
+    def _date_parts(self, meta: VideoMetadata) -> Dict[str, Optional[str]]:
+        cached = self._parts_cache.get(meta.path)
+        if cached is not None:
+            return cached
+        captured_year = captured_month = captured_day = captured_date = None
+        captured_ts: Optional[float] = None
+        if meta.captured_at:
+            text = meta.captured_at.replace('Z', '+00:00')
+            try:
+                dt_obj = dt.datetime.fromisoformat(text)
+            except ValueError:
+                dt_obj = None
+            if dt_obj:
+                captured_year = f'{dt_obj.year:04d}'
+                captured_month = f'{dt_obj.month:02d}'
+                captured_day = f'{dt_obj.day:02d}'
+                captured_date = f'{dt_obj.year:04d}-{dt_obj.month:02d}-{dt_obj.day:02d}'
+                captured_ts = dt_obj.timestamp()
+        path_year = path_month = path_day = path_date = None
+        segments = meta.path.split('/', 1)
+        if segments:
+            date_segment = segments[0]
+            if re.match(r'^\d{4}-\d{2}-\d{2}$', date_segment):
+                path_year, path_month, path_day = date_segment.split('-')
+                path_date = date_segment
+        parts = {
+            'captured_year': captured_year,
+            'captured_month': captured_month,
+            'captured_day': captured_day,
+            'captured_date': captured_date,
+            'captured_ts': captured_ts,
+            'path_year': path_year,
+            'path_month': path_month,
+            'path_day': path_day,
+            'path_date': path_date,
+        }
+        self._parts_cache[meta.path] = parts
+        return parts
+
+    def _normalized_fields(self, meta: VideoMetadata) -> Dict[str, Optional[str]]:
+        parts = self._date_parts(meta)
+        filename = Path(meta.path).name.lower()
+        sanitized_path = re.sub(r'[^a-z0-9]+', ' ', meta.path.lower()).strip()
+        location_parts = [
+            (meta.city or '').strip().lower(),
+            (meta.admin or '').strip().lower(),
+            (meta.country_code or '').strip().lower(),
+        ]
+        location_parts = [p for p in location_parts if p]
+        location_slug = ' '.join(location_parts) if location_parts else None
+        return {
+            'captured_date': parts.get('captured_date'),
+            'captured_year': parts.get('captured_year'),
+            'captured_month': parts.get('captured_month'),
+            'captured_day': parts.get('captured_day'),
+            'path_date': parts.get('path_date'),
+            'path_year': parts.get('path_year'),
+            'path_month': parts.get('path_month'),
+            'path_day': parts.get('path_day'),
+            'location_slug': location_slug,
+            'filename': filename,
+            'path_tokens': sanitized_path or None,
+        }
+
+    def _update_fts(self, conn: sqlite3.Connection, meta: VideoMetadata, normalized: Dict[str, Optional[str]]) -> None:
+        if not self._fts_supported:
+            return
+        try:
+            conn.execute('DELETE FROM videos_fts WHERE path = ?', (meta.path,))
+            conn.execute(
+                'INSERT INTO videos_fts (path, city, admin, country_code, camera_make, camera_model, filename, path_tokens, location_slug) '
+                'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                (
+                    meta.path,
+                    (meta.city or '').lower(),
+                    (meta.admin or '').lower(),
+                    (meta.country_code or '').lower(),
+                    (meta.camera_make or '').lower() if meta.camera_make else '',
+                    (meta.camera_model or '').lower() if meta.camera_model else '',
+                    (normalized.get('filename') or Path(meta.path).name).lower(),
+                    (normalized.get('path_tokens') or meta.path.lower()),
+                    normalized.get('location_slug') or '',
+                ),
+            )
+        except sqlite3.Error:
+            pass
+
+    def _ensure_fts_populated(self) -> None:
+        if not self._fts_supported:
+            self._fts_checked = True
+            return
+        if self._fts_checked:
+            return
+        conn = self._conn_or_open()
+        try:
+            total = conn.execute('SELECT COUNT(*) FROM videos').fetchone()[0]
+            fts_total = conn.execute('SELECT COUNT(*) FROM videos_fts').fetchone()[0]
+        except sqlite3.Error:
+            self._fts_checked = True
+            return
+        if total and fts_total != total:
+            try:
+                conn.execute('DELETE FROM videos_fts')
+                rows = conn.execute(
+                    'SELECT path, city, admin, country_code, camera_make, camera_model, '
+                    'coalesce(filename, "") AS filename, '
+                    'coalesce(path_tokens, "") AS path_tokens, '
+                    'coalesce(location_slug, "") AS location_slug '
+                    'FROM videos'
+                ).fetchall()
+                for row in rows:
+                    conn.execute(
+                        'INSERT INTO videos_fts (path, city, admin, country_code, camera_make, camera_model, filename, path_tokens, location_slug) '
+                        'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                        (
+                            row['path'],
+                            (row['city'] or '').lower(),
+                            (row['admin'] or '').lower(),
+                            (row['country_code'] or '').lower(),
+                            (row['camera_make'] or '').lower(),
+                            (row['camera_model'] or '').lower(),
+                            (row['filename'] or '').lower(),
+                            (row['path_tokens'] or '').lower(),
+                            (row['location_slug'] or '').lower(),
+                        ),
+                    )
+                conn.commit()
+            except sqlite3.Error:
+                pass
+        self._fts_checked = True
+
+    def _fts_query_from_terms(self, terms: Sequence[str]) -> Optional[str]:
+        prepared: List[str] = []
+        for raw in terms:
+            term = (raw or '').strip().lower()
+            if not term:
+                continue
+            term = term.replace('"', ' ')
+            term = re.sub(r'\s+', ' ', term).strip()
+            if not term:
+                continue
+            if ' ' in term:
+                prepared.append(f'"{term}"')
+                continue
+            token = term
+            if len(token) >= 3 and token[-1].isalnum():
+                token = f'{token}*'
+            prepared.append(token)
+        if not prepared:
+            return None
+        return ' AND '.join(prepared)
+
     def ensure_for_path(self, path: Path) -> Optional[VideoMetadata]:
         if path.suffix.lower() not in _VIDEO_EXTS:
             return None
@@ -396,12 +867,30 @@ class MediaMetadataIndex:
             return None
         row = self._fetch(rel)
         row_has_duration = False
+        needs_refresh = False
         if row is not None:
             try:
                 row_has_duration = row['duration_sec'] is not None
             except (KeyError, IndexError):
                 row_has_duration = False
-        if row and (row['file_mtime'] or 0) >= file_mtime and row_has_duration:
+            try:
+                keys = set(row.keys())
+            except Exception:
+                keys = set()
+            required = {
+                'captured_date', 'captured_year', 'captured_month', 'captured_day',
+                'path_date', 'path_year', 'path_month', 'path_day',
+                'location_slug', 'filename', 'path_tokens',
+            }
+            if not required.issubset(keys):
+                needs_refresh = True
+            else:
+                for field in ('filename', 'path_tokens'):
+                    value = row[field] if field in keys else None
+                    if not value:
+                        needs_refresh = True
+                        break
+        if row and (row['file_mtime'] or 0) >= file_mtime and row_has_duration and not needs_refresh:
             return self._row_to_meta(row)
         meta = self._extract_video(path)
         if meta:
@@ -429,7 +918,12 @@ class MediaMetadataIndex:
             rel = path
         conn = self._conn_or_open()
         conn.execute('DELETE FROM videos WHERE path=?', (rel,))
+        try:
+            conn.execute('DELETE FROM videos_fts WHERE path=?', (rel,))
+        except sqlite3.Error:
+            pass
         conn.commit()
+        self._clear_parts_cache(rel)
 
     def _fetch(self, rel: str) -> Optional[sqlite3.Row]:
         conn = self._conn_or_open()
@@ -438,6 +932,37 @@ class MediaMetadataIndex:
         if row is None:
             return None
         return row
+
+    def latest_with_location(self) -> Optional[tuple[VideoMetadata, Dict[str, Optional[str]]]]:
+        """Return the newest video that has usable GPS coordinates."""
+        conn = self._conn_or_open()
+        try:
+            row = conn.execute(
+                'SELECT * FROM videos '
+                'WHERE has_gps = 1 '
+                'ORDER BY '
+                'CASE WHEN captured_at IS NULL OR captured_at = "" THEN 0 ELSE 1 END DESC, '
+                'captured_at DESC, '
+                'file_mtime DESC '
+                'LIMIT 1'
+            ).fetchone()
+        except sqlite3.Error:
+            row = None
+        if row is None:
+            return None
+        meta = self._row_to_meta(row)
+        path = self._root / meta.path
+        if not path.exists():
+            try:
+                self.remove_path(path)
+            except Exception:
+                pass
+            return None
+        try:
+            row_dict = dict(row)
+        except Exception:
+            row_dict = {}
+        return meta, row_dict
 
     def _row_to_meta(self, row: sqlite3.Row) -> VideoMetadata:
         return VideoMetadata(
@@ -458,10 +983,18 @@ class MediaMetadataIndex:
 
     def _upsert(self, meta: VideoMetadata) -> None:
         conn = self._conn_or_open()
+        normalized = self._normalized_fields(meta)
+        self._clear_parts_cache(meta.path)
         conn.execute(
-            'INSERT INTO videos (path, file_mtime, captured_at, lat, lon, alt, city, admin, country_code, duration_sec, camera_make, camera_model, has_gps) '
-            'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) '
-            'ON CONFLICT(path) DO UPDATE SET '
+            'INSERT INTO videos ('
+            ' path, file_mtime, captured_at, lat, lon, alt, city, admin, country_code,'
+            ' duration_sec, camera_make, camera_model, has_gps,'
+            ' captured_date, captured_year, captured_month, captured_day,'
+            ' path_date, path_year, path_month, path_day,'
+            ' location_slug, filename, path_tokens'
+            ' ) VALUES ('
+            ' ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?'
+            ' ) ON CONFLICT(path) DO UPDATE SET '
             ' file_mtime=excluded.file_mtime,'
             ' captured_at=excluded.captured_at,'
             ' lat=excluded.lat,'
@@ -473,7 +1006,18 @@ class MediaMetadataIndex:
             ' duration_sec=excluded.duration_sec,'
             ' camera_make=excluded.camera_make,'
             ' camera_model=excluded.camera_model,'
-            ' has_gps=excluded.has_gps',
+            ' has_gps=excluded.has_gps,'
+            ' captured_date=excluded.captured_date,'
+            ' captured_year=excluded.captured_year,'
+            ' captured_month=excluded.captured_month,'
+            ' captured_day=excluded.captured_day,'
+            ' path_date=excluded.path_date,'
+            ' path_year=excluded.path_year,'
+            ' path_month=excluded.path_month,'
+            ' path_day=excluded.path_day,'
+            ' location_slug=excluded.location_slug,'
+            ' filename=excluded.filename,'
+            ' path_tokens=excluded.path_tokens',
             (
                 meta.path,
                 meta.file_mtime,
@@ -488,8 +1032,20 @@ class MediaMetadataIndex:
                 meta.camera_make,
                 meta.camera_model,
                 1 if meta.has_gps else 0,
+                normalized.get('captured_date'),
+                normalized.get('captured_year'),
+                normalized.get('captured_month'),
+                normalized.get('captured_day'),
+                normalized.get('path_date'),
+                normalized.get('path_year'),
+                normalized.get('path_month'),
+                normalized.get('path_day'),
+                normalized.get('location_slug'),
+                normalized.get('filename'),
+                normalized.get('path_tokens'),
             ),
         )
+        self._update_fts(conn, meta, normalized)
         conn.commit()
 
     # -- queries ----------------------------------------------------------
@@ -502,7 +1058,7 @@ class MediaMetadataIndex:
         if not raw_query:
             count_sql = 'SELECT COUNT(*) FROM videos'
             total = conn.execute(count_sql).fetchone()[0]
-            order_sql = ' ORDER BY coalesce(captured_at, "") DESC, file_mtime DESC'
+            order_sql = ' ORDER BY coalesce(captured_date, "") DESC, coalesce(captured_at, "") DESC, file_mtime DESC'
             sql = 'SELECT * FROM videos' + order_sql + ' LIMIT ? OFFSET ?'
             offset = (page - 1) * size
             rows = conn.execute(sql, (size, offset)).fetchall()
@@ -515,319 +1071,161 @@ class MediaMetadataIndex:
             return results, total
 
         trip_words = getattr(self, '_trip_words', set())
+        tokens_raw = _tokenize_query(raw_query)
 
-        def _tokenize(text: str) -> List[str]:
-            return [tok for tok in re.split(r'[\s,;]+', text) if tok]
-
-        tokens_raw = _tokenize(raw_query)
-
-        month_aliases = {
-            'jan': '01', 'january': '01',
-            'feb': '02', 'february': '02',
-            'mar': '03', 'march': '03',
-            'apr': '04', 'april': '04',
-            'may': '05',
-            'jun': '06', 'june': '06',
-            'jul': '07', 'july': '07',
-            'aug': '08', 'august': '08',
-            'sep': '09', 'sept': '09', 'september': '09',
-            'oct': '10', 'october': '10',
-            'nov': '11', 'november': '11',
-            'dec': '12', 'december': '12',
-        }
-
-        def _split_date_parts(token: str) -> Optional[tuple[str, str, str]]:
-            parts = re.split(r'[-_/\\. ]+', token)
-            if len(parts) != 3:
-                return None
-            if len(parts[0]) == 4 and parts[0].isdigit():
-                year, month, day = parts
-                if len(month) == 1:
-                    month = f'0{month}'
-                if len(day) == 1:
-                    day = f'0{day}'
-                if month.isdigit() and day.isdigit():
-                    try:
-                        dt.datetime(int(year), int(month), int(day))
-                    except ValueError:
-                        return None
-                    return year, month, day
-            return None
-
-        text_fields_default = [
-            'lower(coalesce(city, ""))',
-            'lower(coalesce(admin, ""))',
-            'lower(coalesce(country_code, ""))',
-            'lower(path)',
-            'lower(coalesce(camera_make, ""))',
-            'lower(coalesce(camera_model, ""))',
-        ]
-
-        def _collect_text_values(meta: VideoMetadata, include_path: bool = True) -> List[str]:
-            values = [
-                (meta.city or '').lower(),
-                (meta.admin or '').lower(),
-                (meta.country_code or '').lower(),
-                (meta.camera_make or '').lower(),
-                (meta.camera_model or '').lower(),
-            ]
-            path_text = meta.path.lower()
-            filename_text = Path(meta.path).name.lower()
-            values.append(filename_text)
-            if include_path:
-                values.append(path_text)
-            return [v for v in values if v]
-
-        parts_cache: Dict[str, Dict[str, Optional[str]]] = {}
-
-        def _date_parts(meta: VideoMetadata) -> Dict[str, Optional[str]]:
-            cached = parts_cache.get(meta.path)
-            if cached is not None:
-                return cached
-            captured_year = captured_month = captured_day = captured_date = None
-            captured_ts = None
-            if meta.captured_at:
-                text = meta.captured_at.replace('Z', '+00:00')
-                try:
-                    dt_obj = dt.datetime.fromisoformat(text)
-                except ValueError:
-                    dt_obj = None
-                if dt_obj:
-                    captured_year = f'{dt_obj.year:04d}'
-                    captured_month = f'{dt_obj.month:02d}'
-                    captured_day = f'{dt_obj.day:02d}'
-                    captured_date = f'{dt_obj.year:04d}-{dt_obj.month:02d}-{dt_obj.day:02d}'
-                    captured_ts = dt_obj.timestamp()
-            path_year = path_month = path_day = path_date = None
-            segments = meta.path.split('/', 1)
-            if segments:
-                date_segment = segments[0]
-                if re.match(r'^\d{4}-\d{2}-\d{2}$', date_segment):
-                    path_year, path_month, path_day = date_segment.split('-')
-                    path_date = date_segment
-            parts = {
-                'captured_year': captured_year,
-                'captured_month': captured_month,
-                'captured_day': captured_day,
-                'captured_date': captured_date,
-                'captured_ts': captured_ts,
-                'path_year': path_year,
-                'path_month': path_month,
-                'path_day': path_day,
-                'path_date': path_date,
-            }
-            parts_cache[meta.path] = parts
-            return parts
-
-        PreparedToken = Dict[str, object]
-
-        def _prepare_token(raw_token: str) -> Optional[PreparedToken]:
-            norm = raw_token.strip().lower()
-            if not norm:
-                return None
-            if norm in trip_words:
-                return None
-
-            clauses: List[str] = []
-            params: List[str] = []
-            matchers: List = []
-
-            is_digit = norm.isdigit()
-            token_len = len(norm)
-
-            text_fields = text_fields_default.copy()
-            include_path_in_text = True
-
-            if is_digit and token_len <= 2:
-                include_path_in_text = False
-                text_fields = [
-                    'lower(coalesce(city, ""))',
-                    'lower(coalesce(admin, ""))',
-                    'lower(coalesce(country_code, ""))',
-                    'lower(coalesce(camera_make, ""))',
-                    'lower(coalesce(camera_model, ""))',
-                ]
-
-            like_value = f'%{norm}%'
-            for field in text_fields:
-                clauses.append(f'{field} LIKE ?')
-                params.append(like_value)
-
-            if is_digit and token_len <= 2:
-                clauses.append('lower(path) LIKE ?')
-                params.append(like_value)
-
-            def _match_text(meta: VideoMetadata, needle: str = norm, include_path: bool = include_path_in_text) -> bool:
-                for value in _collect_text_values(meta, include_path=include_path):
-                    if needle in value:
-                        return True
-                return False
-
-            if text_fields:
-                matchers.append(_match_text)
-
-            date_parts = None
-
-            full_date = _split_date_parts(norm)
-            if full_date:
-                year, month, day = full_date
-                clauses.extend([
-                    'substr(coalesce(captured_at, ""), 1, 10) = ?',
-                    'substr(path, 1, 10) = ?',
-                ])
-                params.extend([f'{year}-{month}-{day}', f'{year}-{month}-{day}'])
-
-                def _match_full_date(meta: VideoMetadata, target: str = f'{year}-{month}-{day}') -> bool:
-                    parts = _date_parts(meta)
-                    return parts.get('captured_date') == target or parts.get('path_date') == target
-
-                matchers.append(_match_full_date)
-                return {
-                    'raw': raw_token,
-                    'norm': norm,
-                    'clauses': clauses,
-                    'params': params,
-                    'matchers': matchers,
-                }
-
-            if is_digit and token_len == 4:
-                year = norm
-                clauses.extend([
-                    'substr(coalesce(captured_at, ""), 1, 4) = ?',
-                    'substr(path, 1, 4) = ?',
-                ])
-                params.extend([year, year])
-
-                def _match_year(meta: VideoMetadata, target: str = year) -> bool:
-                    parts = _date_parts(meta)
-                    return parts.get('captured_year') == target or parts.get('path_year') == target
-
-                matchers.append(_match_year)
-
-            if is_digit and 1 <= token_len <= 2 and norm.isdigit():
-                day_int = int(norm)
-                if 1 <= day_int <= 31:
-                    day_value = f'{day_int:02d}'
-                    clauses.extend([
-                        'substr(coalesce(captured_at, ""), 9, 2) = ?',
-                        'substr(path, 9, 2) = ?',
-                    ])
-                    params.extend([day_value, day_value])
-
-                    def _match_day(meta: VideoMetadata, target: str = day_value) -> bool:
-                        parts = _date_parts(meta)
-                        return parts.get('captured_day') == target or parts.get('path_day') == target
-
-                    matchers.append(_match_day)
-
-            if '-' in norm and not full_date:
-                pieces = norm.split('-')
-                if len(pieces) == 2 and len(pieces[0]) == 4 and pieces[0].isdigit() and pieces[1].isdigit():
-                    year = pieces[0]
-                    month = pieces[1]
-                    if len(month) == 1:
-                        month = f'0{month}'
-                    if month.isdigit() and 1 <= int(month) <= 12:
-                        clauses.extend([
-                            'substr(coalesce(captured_at, ""), 1, 7) = ?',
-                            'substr(path, 1, 7) = ?',
-                        ])
-                        params.extend([f'{year}-{month}', f'{year}-{month}'])
-
-                        def _match_year_month(meta: VideoMetadata, target: str = f'{year}-{month}') -> bool:
-                            parts = _date_parts(meta)
-                            captured_month = parts.get('captured_month')
-                            path_month = parts.get('path_month')
-                            captured_year = parts.get('captured_year')
-                            path_year = parts.get('path_year')
-                            return (
-                                (captured_year and captured_month and f'{captured_year}-{captured_month}' == target)
-                                or (path_year and path_month and f'{path_year}-{path_month}' == target)
-                            )
-
-                        matchers.append(_match_year_month)
-
-            month_value = month_aliases.get(norm)
-            if month_value:
-                clauses.extend([
-                    'substr(coalesce(captured_at, ""), 6, 2) = ?',
-                    'substr(path, 6, 2) = ?',
-                ])
-                params.extend([month_value, month_value])
-
-                def _match_month(meta: VideoMetadata, target: str = month_value) -> bool:
-                    parts = _date_parts(meta)
-                    return parts.get('captured_month') == target or parts.get('path_month') == target
-
-                matchers.append(_match_month)
-
-            if not clauses:
-                return None
-
-            return {
-                'raw': raw_token,
-                'norm': norm,
-                'clauses': clauses,
-                'params': params,
-                'matchers': matchers,
-            }
-
-        prepared_tokens: List[PreparedToken] = []
+        text_terms: List[str] = []
         where_terms: List[str] = []
         where_params: List[str] = []
 
         for token in tokens_raw:
-            info = _prepare_token(token)
-            if not info:
+            norm = token.strip().lower()
+            if not norm or norm in trip_words:
                 continue
-            prepared_tokens.append(info)
-            term = '(' + ' OR '.join(info['clauses']) + ')'
-            where_terms.append(term)
-            where_params.extend(info['params'])
+
+            full_date = _split_date_parts(norm)
+            if full_date:
+                date_value = f'{full_date[0]}-{full_date[1]}-{full_date[2]}'
+                where_terms.append('(captured_date = ? OR path_date = ?)')
+                where_params.extend([date_value, date_value])
+                continue
+
+            if norm.isdigit() and len(norm) == 4:
+                where_terms.append('(captured_year = ? OR path_year = ?)')
+                where_params.extend([norm, norm])
+                continue
+
+            if '-' in norm and not full_date:
+                pieces = [p for p in norm.split('-') if p]
+                if len(pieces) == 2 and pieces[0].isdigit() and pieces[1].isdigit():
+                    year, month = pieces
+                    if len(year) == 4:
+                        if len(month) == 1:
+                            month = f'0{month}'
+                        if month.isdigit() and 1 <= int(month) <= 12:
+                            where_terms.append('((captured_year = ? AND captured_month = ?) OR (path_year = ? AND path_month = ?))')
+                            where_params.extend([year, month, year, month])
+                            continue
+
+            month_value = _MONTH_ALIASES.get(norm)
+            if month_value:
+                where_terms.append('(captured_month = ? OR path_month = ?)')
+                where_params.extend([month_value, month_value])
+                continue
+
+            if norm.isdigit() and 1 <= len(norm) <= 2:
+                try:
+                    day_int = int(norm)
+                except ValueError:
+                    day_int = -1
+                if 1 <= day_int <= 31:
+                    day_value = f'{day_int:02d}'
+                    where_terms.append('(captured_day = ? OR path_day = ?)')
+                    where_params.extend([day_value, day_value])
+                    continue
+
+            text_terms.append(norm)
+
+        if not text_terms and not where_terms:
+            text_terms.append(raw_query.lower())
+
+        def _row_text_values(row: sqlite3.Row) -> List[str]:
+            values: List[str] = []
+            for key in (
+                'city', 'admin', 'country_code',
+                'camera_make', 'camera_model',
+                'location_slug', 'filename', 'path_tokens',
+            ):
+                try:
+                    value = row[key]
+                except (KeyError, IndexError):
+                    value = None
+                if not value:
+                    continue
+                values.append(str(value).lower())
+            return values
 
         scored: Dict[str, Dict[str, object]] = {}
 
-        def _compute_score(meta: VideoMetadata) -> int:
-            score_val = 0
-            for info in prepared_tokens:
-                matched = False
-                for matcher in info['matchers']:
-                    try:
-                        if matcher(meta):
-                            matched = True
-                            break
-                    except Exception:
-                        continue
-                if matched:
-                    score_val += 1
-            return score_val
+        fts_rows: List[sqlite3.Row] = []
+        if self._fts_supported and text_terms:
+            self._ensure_fts_populated()
+            fts_query = self._fts_query_from_terms(text_terms)
+            if fts_query:
+                sql_from = ' FROM videos v JOIN videos_fts ON v.path = videos_fts.path'
+                where_clauses = list(where_terms)
+                params: List[str] = list(where_params)
+                where_clauses.insert(0, 'videos_fts MATCH ?')
+                params.insert(0, fts_query)
+                where_sql = ''
+                if where_clauses:
+                    where_sql = ' WHERE ' + ' AND '.join(where_clauses)
+                order_sql = ' ORDER BY bm25(videos_fts) ASC, coalesce(v.captured_date, "") DESC, v.file_mtime DESC'
+                try:
+                    fts_rows = conn.execute('SELECT v.*, bm25(videos_fts) AS fts_rank' + sql_from + where_sql + order_sql, tuple(params)).fetchall()
+                except sqlite3.Error:
+                    fts_rows = []
 
-        if prepared_tokens and where_terms:
-            where_clause = ' WHERE ' + ' OR '.join(where_terms)
-            sql = 'SELECT * FROM videos' + where_clause
-            rows = conn.execute(sql, tuple(where_params)).fetchall()
-            for row in rows:
+        for row in fts_rows:
+            meta = self._row_to_meta(row)
+            path_obj = self._root / meta.path
+            if not path_obj.exists():
+                self.remove_path(meta.path)
+                continue
+            base_rank = float(row['fts_rank']) if 'fts_rank' in row.keys() else 0.0
+            base_score = 1.0 / (1.0 + max(base_rank, 0.0))
+            existing = scored.get(meta.path)
+            if existing:
+                existing['base'] = max(float(existing.get('base', 0.0)), base_score)
+            else:
+                scored[meta.path] = {'meta': meta, 'base': base_score, 'semantic': 0.0}
+
+        needs_fallback = not self._fts_supported or not text_terms or not scored
+        if needs_fallback:
+            fallback_clauses = list(where_terms)
+            fallback_params = list(where_params)
+            for term in text_terms:
+                like_value = f'%{term}%'
+                fallback_clauses.append(
+                    '('
+                    'lower(coalesce(city, "")) LIKE ? OR '
+                    'lower(coalesce(admin, "")) LIKE ? OR '
+                    'lower(coalesce(country_code, "")) LIKE ? OR '
+                    'lower(coalesce(camera_make, "")) LIKE ? OR '
+                    'lower(coalesce(camera_model, "")) LIKE ? OR '
+                    'lower(coalesce(location_slug, "")) LIKE ? OR '
+                    'lower(coalesce(filename, "")) LIKE ? OR '
+                    'lower(coalesce(path_tokens, "")) LIKE ?'
+                    ')'
+                )
+                fallback_params.extend([like_value] * 8)
+
+            where_sql = ''
+            if fallback_clauses:
+                where_sql = ' WHERE ' + ' AND '.join(fallback_clauses)
+            fallback_sql = 'SELECT * FROM videos' + where_sql + ' ORDER BY coalesce(captured_date, "") DESC, file_mtime DESC'
+            try:
+                fallback_rows = conn.execute(fallback_sql, tuple(fallback_params)).fetchall()
+            except sqlite3.Error:
+                fallback_rows = []
+
+            for row in fallback_rows:
                 meta = self._row_to_meta(row)
-                path = self._root / meta.path
-                if not path.exists():
-                    continue
-                score_val = _compute_score(meta)
-                if score_val <= 0 and prepared_tokens:
-                    continue
-                entry = scored.get(meta.path)
-                if entry is None or score_val > entry['base']:
-                    scored[meta.path] = {'meta': meta, 'base': score_val, 'semantic': 0.0}
-        else:
-            order_sql = ' ORDER BY coalesce(captured_at, "") DESC, file_mtime DESC'
-            sql = 'SELECT * FROM videos' + order_sql
-            rows = conn.execute(sql).fetchall()
-            for row in rows:
-                meta = self._row_to_meta(row)
-                path = self._root / meta.path
-                if not path.exists():
+                path_obj = self._root / meta.path
+                if not path_obj.exists():
                     self.remove_path(meta.path)
                     continue
-                scored.setdefault(meta.path, {'meta': meta, 'base': 0, 'semantic': 0.0})
+                text_values = _row_text_values(row)
+                match_count = 0
+                if text_terms:
+                    for term in text_terms:
+                        if any(term in value for value in text_values):
+                            match_count += 1
+                existing = scored.get(meta.path)
+                base_score = float(match_count)
+                if existing:
+                    existing['base'] = max(float(existing.get('base', 0.0)), base_score)
+                else:
+                    scored[meta.path] = {'meta': meta, 'base': base_score, 'semantic': 0.0}
 
         cfg = self._paths.cfg or {}
         transcription_cfg = cfg.get('transcription') or {}
@@ -836,6 +1234,8 @@ class MediaMetadataIndex:
         semantic_model_id = semantic_cfg.get('model') or 'sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2'
         semantic_device = semantic_cfg.get('device', 'cpu')
         min_similarity = float(semantic_cfg.get('min_similarity', 0.25))
+        semantic_weight = float(semantic_cfg.get('weight', 1.0))
+        ann_top_k_default = int(semantic_cfg.get('ann_top_k', 100))
 
         if raw_query and semantic_enabled and semantic_available() and _np is not None:
             try:
@@ -853,18 +1253,26 @@ class MediaMetadataIndex:
 
             if query_vec is not None:
                 queue = self._transcription_index()
-                for rel_path, blob, model in queue.iter_embeddings(model=semantic_model_id):
-                    if blob is None:
-                        continue
-                    if model and model != semantic_model_id:
-                        continue
-                    try:
-                        vec = _np.frombuffer(blob, dtype=_np.float32)
-                    except Exception:
-                        continue
-                    if vec.size == 0:
-                        continue
-                    similarity = float(_np.dot(vec, query_vec))
+                ann_top_k = max(ann_top_k_default, len(scored) * 2 or ann_top_k_default)
+                ann_results = self._semantic_ann.query(queue, semantic_model_id, query_vec, top_k=ann_top_k)
+
+                if not ann_results:
+                    ann_results = []
+                    for rel_path, blob, model in queue.iter_embeddings(model=semantic_model_id):
+                        if blob is None:
+                            continue
+                        if model and model != semantic_model_id:
+                            continue
+                        try:
+                            vec = _np.frombuffer(blob, dtype=_np.float32)
+                        except Exception:
+                            continue
+                        if vec.size == 0:
+                            continue
+                        similarity = float(_np.dot(vec, query_vec))
+                        ann_results.append((rel_path, similarity))
+
+                for rel_path, similarity in ann_results:
                     if similarity < min_similarity:
                         continue
                     entry = scored.get(rel_path)
@@ -872,9 +1280,13 @@ class MediaMetadataIndex:
                         meta = self.ensure_for_path(self._root / rel_path)
                         if not meta:
                             continue
-                        scored[rel_path] = {'meta': meta, 'base': 0, 'semantic': similarity}
-                    else:
-                        entry['semantic'] = max(float(entry.get('semantic', 0.0)), similarity)
+                        entry = {'meta': meta, 'base': 0.0, 'semantic': 0.0}
+                        scored[rel_path] = entry
+                    entry['semantic'] = max(float(entry.get('semantic', 0.0)), float(similarity))
+            else:
+                semantic_weight = 0.0
+        else:
+            semantic_weight = 0.0
 
         if not scored:
             return [], 0
@@ -883,8 +1295,8 @@ class MediaMetadataIndex:
             meta = entry['meta']  # type: ignore[assignment]
             base = float(entry.get('base', 0))
             semantic_val = float(entry.get('semantic', 0.0))
-            combined = base + semantic_val
-            parts = _date_parts(meta)
+            combined = base + semantic_weight * semantic_val
+            parts = self._date_parts(meta)
             captured_ts = parts.get('captured_ts') or 0.0
             return (-combined, -semantic_val, -(captured_ts or 0.0), -meta.file_mtime, meta.path)
 

@@ -7,7 +7,7 @@ import subprocess
 from pathlib import Path
 from typing import Callable, Optional
 
-from ..backup.backup import copy_from_source
+from ..backup.backup import CopyProgress, copy_from_source
 from ..paths import Paths
 from .http_importer import HttpImportResult
 
@@ -103,15 +103,17 @@ def import_media_mtp(
     paths: Paths,
     *,
     verify_mode: str,
-    progress_cb: Optional[Callable[[int, int], None]] = None,
+    progress_cb: Optional[Callable[[CopyProgress], None]] = None,
 ) -> Optional[HttpImportResult]:
     """Return HttpImportResult if MTP import was performed, else None to allow fallback."""
 
     if not _SIMPLE_MTPFS:
+        logger.info('simple-mtpfs not available; skipping GoPro MTP import path')
         return None
 
     device_idx = _pick_gopro_device()
     if device_idx is None:
+        logger.info('No GoPro-like MTP device found (simple-mtpfs -l reported %s)', _list_simple_mtpfs_devices())
         return None
 
     mount_point = Path('/tmp/blackbox_gopro_mtp')
@@ -153,4 +155,3 @@ def import_media_mtp(
     total_files = copy_result.copied_files + copy_result.skipped_files + copy_result.replaced_files
     downloaded = copy_result.copied_files + copy_result.replaced_files
     return HttpImportResult(downloaded, copy_result.skipped_files, copy_result.errors, total_files)
-

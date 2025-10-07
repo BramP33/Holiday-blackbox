@@ -1,5 +1,4 @@
 from __future__ import annotations
-import os
 from typing import List
 
 
@@ -9,8 +8,10 @@ class Buttons:
     Index top->bottom: 0..3, active-low.
     """
 
-    def __init__(self, pins: List[int] | None = None, dev_mode: bool = False):
-        self.dev_mode = dev_mode
+    def __init__(self, pins: List[int] | None = None, dev_mode: bool = False, enabled: bool = True):
+        self.enabled = enabled
+        self.disabled = not enabled
+        self.dev_mode = dev_mode or self.disabled
         self.pins = pins or [5, 6, 13, 19]
         self._gpio = None
         if not self.dev_mode:
@@ -29,7 +30,7 @@ class Buttons:
                 self._gpio = None
 
     def read(self):
-        """Return list[bool] pressed states (top->bottom) or None in dev_mode."""
+        """Return list[bool] pressed states or None when disabled/dev mode."""
         if self.dev_mode or not self._gpio:
             return None
         GPIO = self._gpio

@@ -45,8 +45,9 @@ def build_video_proxy(src: Path, dst: Path, height: int = 480, bitrate: str = '1
     dst.parent.mkdir(parents=True, exist_ok=True)
     cmd = [
         'ffmpeg', '-y', '-i', str(src), '-vf', f"scale=-2:{height}",
-        '-c:v', 'libx264', '-b:v', bitrate, '-preset', 'veryfast', '-movflags', '+faststart',
-        '-an', str(dst)
+        '-c:v', 'libx264', '-b:v', bitrate, '-preset', 'veryfast',
+        '-c:a', 'aac', '-b:a', '128k', '-ac', '2', '-movflags', '+faststart',
+        str(dst)
     ]
     return _run(cmd)
 

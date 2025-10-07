@@ -1,12 +1,16 @@
 # Holiday Blackbox
 
-Holiday Blackbox is a Raspberry Pi 5 field backup appliance for offloading camera media while travelling. It drives a Waveshare 2.7" monochrome e-paper display, verifies every copy, generates lightweight proxies, and exposes an offline-friendly web gallery and JSON API.
+Holiday Blackbox is a Raspberry Pi 5 field backup appliance for offloading camera media while travelling. It supports both a Waveshare 2.7" monochrome e-paper display and a HyperPixel 4.0 touchscreen (via Flutter), verifies every copy, generates lightweight proxies, and exposes an offline-friendly web gallery and JSON API.
+
+## Who is this for?
+The project is made with creators in mind. Outside people who don't mind sleeping in a tent to get the perfect shot.
 
 ## Highlights
 - Verified ingest from SD cards, USB readers, GoPro Link, and (optionally) iPhone via ifuse.
 - Deduplication with SHA-256 comparison and configurable verification modes (`fast` size check or full hash).
 - Automatic 480p H.264 proxy generation plus photo thumbnails for quick review.
 - Button-driven e-paper UI with a PNG mock display for desktop development.
+- Flutter touchscreen UI for HyperPixel 4.0 displays (see `Software/flutter_frontend`).
 - Lightweight Flask web UI (`/photos`, `/videos`, `/`) with pagination and downloads.
 - Optional access-point mode powered by NetworkManager helpers.
 - On-device transcription and keyword indexing (scheduled overnight, with a manual "Index now" trigger on the info screen).
@@ -14,6 +18,7 @@ Holiday Blackbox is a Raspberry Pi 5 field backup appliance for offloading camer
 ## Hardware Targets
 - Raspberry Pi 5 (Raspberry Pi OS Lite, 64-bit recommended).
 - Waveshare 2.7" V2 e-paper (epd2in7) connected over SPI.
+- Pimoroni HyperPixel 4.0 rectangular touchscreen running the Flutter UI.
 - Four active-low buttons on GPIO5, GPIO6, GPIO13, GPIO19 (internal pull-ups).
 - NVMe SSD mounted at `/mnt/nvme` (or another path configured in `paths.nvme_mount`).
 - Stable 5V/3A power. Undervoltage triggers a pause screen until power recovers.
@@ -32,6 +37,8 @@ Holiday Blackbox is a Raspberry Pi 5 field backup appliance for offloading camer
 - `scripts/` — install/update helpers, AP toggles, maintenance utilities.
 - `systemd/` — unit templates for the UI, web app, and shutdown screen.
 
+- `flutter_frontend/` — Flutter touchscreen app that talks to the Flask API.
+
 ## Getting Started on Raspberry Pi
 For the full walkthrough (booting from NVMe, wiring, OS packages), follow [`INSTALL.md`](INSTALL.md).
 
@@ -46,7 +53,24 @@ chmod +x scripts/*.sh
 ```
 
 On first launch the app writes `config.yml` beside `config.default.yml`. Edit it to set trip dates, AP credentials, preferred language, proxy limits, and mount paths. Restart with `sudo systemctl restart blackbox blackbox-web` after changes.
+## Flutter Frontend Installation
+cd ~/Holiday-blackbox/Software/flutter_frontend
 
+# Install dependencies
+flutter pub get
+
+# Build for Linux (flutter-pi)
+flutter build linux --release
+
+# Copy the bundle to the runtime path
+sudo mkdir -p /opt/blackbox_flutter
+sudo chown -R blackbox:blackbox /opt/blackbox_flutter
+rsync -a build/linux/arm64/release/bundle/ /opt/blackbox_flutter/
+
+# The Flutter app is launched automatically via systemd service
+# blackbox-flutter.service starts X11 and runs the Flutter UI on HyperPixel 4.0
+# Ensure both backend services are running:
+# sudo systemctl start blackbox-web.service blackbox-flutter.service
 ## Development on a Laptop/Desktop
 The display layer automatically falls back to the PNG mock display, so you can run the UI without hardware:
 
@@ -96,6 +120,8 @@ Set `BLACKBOX_PARTIAL=1` if you want to exercise partial refresh support with re
   - `/` — landing page with latest photo preview and camping fact of the day.
   - `/photos` and `/videos` — HTML galleries (default 50 items per page) with download links.
   - `/api/photos` and `/api/videos` — paginated JSON (`page`, `page_size`, `total`, `items`).
+  - `/api/stats` — trip summary (duration, photos, free space, devices).
+  - `/api/backup/start`, `/api/backup/status`, `/api/backup/cancel` — trigger and monitor manual backups.
   - `/preview/<path>` and `/download/<path>` — serve proxies and originals.
 - Language strings come from `blackbox/i18n/strings_*.yml`; set `language` in config to switch.
 
@@ -104,6 +130,13 @@ Set `BLACKBOX_PARTIAL=1` if you want to exercise partial refresh support with re
 - `ifuse`, `libimobiledevice`, and FUSE (`libfuse` and `fusermount3`).
 - Trusted device pairing (`idevicepair pair`). The importer retries pairing prompts when possible.
 - Run the importer from custom tooling by calling `import_videos_from_iphone(Paths(cfg), verify_mode=...)`.
+
+## GoPro MTP Importer
+`blackbox.gopro.mtp_importer` prefers using `simple-mtpfs` for wired GoPro transfers. Ensure:
+- `simple-mtpfs` and `fuse` packages are installed (`sudo apt-get install simple-mtpfs fuse`).
+- Your user is in the `fuse` group (the installer attempts to add it).
+- `simple-mtpfs -l` detects the camera before starting the UI. If not, double-check the USB cable and enable GoPro Connect mode on the camera.
+When `simple-mtpfs` is unavailable the app falls back to the HTTP importer automatically.
 
 ## Access Point Helpers
 - `ap_mode.py` toggles AP mode from the UI. Ensure NetworkManager is installed and Wi-Fi credentials are set in `config.yml`.

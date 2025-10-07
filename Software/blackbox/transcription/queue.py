@@ -4,8 +4,9 @@ import json
 import sqlite3
 import threading
 import time
+import datetime as dt
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, TYPE_CHECKING
+from typing import Any, Dict, Iterable, List, Optional, Tuple, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from ..paths import Paths
@@ -205,6 +206,53 @@ class TranscriptionQueue:
         ).fetchone()
         return int(row['c']) if row else 0
 
+    def state_counts(self) -> Dict[str, int]:
+        """Return counts grouped by job state."""
+        conn = self._conn_or_open()
+        rows = conn.execute(
+            'SELECT state, COUNT(*) AS c FROM transcripts GROUP BY state'
+        ).fetchall()
+        summary: Dict[str, int] = {}
+        for row in rows:
+            state = (row['state'] or '').strip().lower() or 'unknown'
+            summary[state] = int(row['c'] or 0)
+        return summary
+
+    def recent_errors(self, limit: int = 5) -> List[Dict[str, Any]]:
+        """Return recent jobs that recorded an error message."""
+        limit = max(1, int(limit))
+        conn = self._conn_or_open()
+        rows = conn.execute(
+            '''
+            SELECT path, state, last_error, updated_at, attempts
+              FROM transcripts
+             WHERE trim(coalesce(last_error, '')) != ''
+             ORDER BY updated_at DESC
+             LIMIT ?
+            ''',
+            (limit,),
+        ).fetchall()
+        items: List[Dict[str, Any]] = []
+        for row in rows:
+            ts = row['updated_at']
+            if isinstance(ts, (int, float)):
+                try:
+                    updated = dt.datetime.fromtimestamp(ts, tz=dt.timezone.utc).isoformat()
+                except Exception:
+                    updated = None
+            else:
+                updated = None
+            items.append(
+                {
+                    'path': row['path'],
+                    'state': row['state'],
+                    'last_error': row['last_error'],
+                    'updated_at': updated,
+                    'attempts': row['attempts'],
+                }
+            )
+        return items
+
     # -- state transitions ------------------------------------------------
     def mark_processing(self, rel_path: str) -> None:
         now = time.time()
@@ -341,3 +389,42 @@ class TranscriptionQueue:
             if blob is None:
                 continue
             yield row['path'], blob, row['embedding_model']
+
+    def iter_missing_embeddings(self, *, model: str) -> Iterable[Tuple[str, str]]:
+        conn = self._conn_or_open()
+        rows = conn.execute(
+            '''
+            SELECT path, coalesce(transcript, '') AS transcript
+              FROM transcripts
+             WHERE state = 'done'
+               AND trim(coalesce(transcript, '')) <> ''
+               AND (
+                    transcript_embedding IS NULL
+                    OR embedding_model IS NULL
+                    OR embedding_model <> ?
+               )
+            ''',
+            (model,),
+        ).fetchall()
+        for row in rows:
+            yield row['path'], row['transcript']
+
+    def store_embedding(self, rel_path: str, embedding: bytes, model: str) -> None:
+        now = time.time()
+        conn = self._conn_or_open()
+        conn.execute(
+            '''
+            UPDATE transcripts
+               SET transcript_embedding = ?,
+                   embedding_model = ?,
+                   updated_at = ?
+             WHERE path = ?
+            ''',
+            (
+                sqlite3.Binary(embedding),
+                model,
+                now,
+                rel_path,
+            ),
+        )
+        conn.commit()
