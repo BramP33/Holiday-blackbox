@@ -523,6 +523,23 @@ def create_app() -> Flask:
             't': lambda key, **kwargs: tr(cur_lang, key, **kwargs),
         }
 
+    # Serve Flutter web app
+    @app.get('/flutter')
+    def flutter_app():
+        flutter_build_dir = Path(__file__).parent.parent.parent / 'flutter_frontend' / 'build' / 'web'
+        index_path = flutter_build_dir / 'index.html'
+        if index_path.exists():
+            return send_file(index_path)
+        return 'Flutter app not found', 404
+    
+    @app.get('/flutter/<path:filename>')
+    def flutter_static(filename):
+        flutter_build_dir = Path(__file__).parent.parent.parent / 'flutter_frontend' / 'build' / 'web'
+        file_path = flutter_build_dir / filename
+        if file_path.exists() and file_path.is_file():
+            return send_file(file_path)
+        return 'File not found', 404
+
     @app.get('/')
     def home():
         # Photo of the day: latest photo if available
