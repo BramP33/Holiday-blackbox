@@ -1,5 +1,6 @@
 from __future__ import annotations
 from flask import Flask, jsonify, send_file, render_template_string, request, render_template, url_for, redirect
+from flask_cors import CORS
 from pathlib import Path
 import datetime as dt
 import io
@@ -28,6 +29,10 @@ def create_app() -> Flask:
     cfg = load_config()
     paths = Paths(cfg).ensure()
     app = Flask(__name__)
+    
+    # Enable CORS for all routes
+    CORS(app)
+    
     metadata_index = MediaMetadataIndex(paths)
     transcription_queue = TranscriptionQueue(paths)
     proxy_executor = ThreadPoolExecutor(max_workers=1)
