@@ -44,24 +44,8 @@ sudo apt install -y \
 # Enable NetworkManager for AP mode
 sudo systemctl enable --now NetworkManager
 
-# Configure HyperPixel 4.0 display (simple config method)
-echo "🖥️ Configuring HyperPixel 4.0 display..."
-CONFIG_PATH="/boot/config.txt"
-if [ -f /boot/firmware/config.txt ]; then
-  CONFIG_PATH="/boot/firmware/config.txt"
-fi
-
-if ! grep -q "dtoverlay=vc4-kms-dpi-hyperpixel4" "$CONFIG_PATH" 2>/dev/null; then
-  echo "Adding HyperPixel configuration..."
-  cat <<EOF | sudo tee -a "$CONFIG_PATH" >/dev/null
-
-# HyperPixel 4.0 Configuration  
-dtoverlay=vc4-kms-dpi-hyperpixel4
-dtparam=rotate=90,touchscreen-swapped-x-y,touchscreen-inverted-y
-EOF
-else
-  echo "HyperPixel already configured."
-fi
+# Display configuration - configure your display manually
+echo "🖥️ Display configuration skipped - configure manually if needed"
 
 # Clone repository
 echo "📥 Downloading Holiday Blackbox..."
@@ -94,12 +78,10 @@ echo "   sudo reboot"
 echo ""
 echo "After reboot:"
 echo "   🌐 Web interface: http://blackbox.local:8080"
-echo "   📱 HyperPixel display should show touchscreen interface"
+echo "   📱 Configure your display manually for touchscreen interface"
 echo "   🔧 Config file: ~/Holiday-blackbox/Software/config.yml"
 echo ""
 echo "🚨 Don't forget to:"
-echo "   1. Edit config.yml for your trip settings"
-echo "   2. Test touch interface on the HyperPixel"
+echo "   1. Configure your display/touchscreen if needed"
+echo "   2. Edit config.yml for your trip settings"
 echo "   3. Connect any USB devices you want to backup"
-echo ""
-echo "💡 NO GPIO pins are used with HyperPixel setup - all pins are free for other uses!"

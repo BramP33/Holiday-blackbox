@@ -57,26 +57,7 @@ sudo apt install -y libgtk-3-0 || sudo apt install -y libgtk-3-0t64 || true
 sudo apt install -y libmpv1 || sudo apt install -y libmpv2 || sudo apt install -y mpv || true
 sudo apt install -y libmpv-dev || true
 
-# 3. Configure HyperPixel 4.0
-log_info "Configuring HyperPixel 4.0 display..."
-CONFIG_PATH="/boot/config.txt"
-if [ -f /boot/firmware/config.txt ]; then
-    CONFIG_PATH="/boot/firmware/config.txt"
-fi
-
-if ! grep -q "dtoverlay=vc4-kms-dpi-hyperpixel4" "$CONFIG_PATH" 2>/dev/null; then
-    log_info "Adding HyperPixel configuration to $CONFIG_PATH"
-    cat <<EOF | sudo tee -a "$CONFIG_PATH" >/dev/null
-
-# HyperPixel 4.0 Configuration  
-dtoverlay=vc4-kms-dpi-hyperpixel4
-dtparam=rotate=90,touchscreen-swapped-x-y,touchscreen-inverted-y
-EOF
-else
-    log_success "HyperPixel already configured"
-fi
-
-# 4. Install Flutter
+# 3. Install Flutter
 log_info "Installing Flutter for ARM64..."
 FLUTTER_VERSION="3.24.5"
 FLUTTER_URL="https://storage.googleapis.com/flutter_infra_release/releases/stable/linux/flutter_linux_${FLUTTER_VERSION}-stable.tar.xz"
@@ -102,12 +83,12 @@ if ! grep -q "/opt/flutter/bin" ~/.bashrc; then
 fi
 export PATH="$PATH:/opt/flutter/bin"
 
-# 5. Verify Flutter
+# 4. Verify Flutter
 log_info "Verifying Flutter installation..."
 /opt/flutter/bin/flutter doctor --accept-licenses
 /opt/flutter/bin/flutter precache --linux
 
-# 6. Clone Holiday Blackbox
+# 5. Clone Holiday Blackbox
 log_info "Cloning Holiday Blackbox repository..."
 cd ~
 if [ -d "Holiday-blackbox" ]; then
@@ -118,26 +99,26 @@ else
     cd Holiday-blackbox
 fi
 
-# 7. Install Python backend
+# 6. Install Python backend
 log_info "Installing Python backend..."
 cd Software
 chmod +x scripts/*.sh
 ./scripts/install.sh
 
-# 8. Build Flutter app
+# 7. Build Flutter app
 log_info "Building native Flutter application..."
 cd flutter_frontend
 /opt/flutter/bin/flutter pub get
 /opt/flutter/bin/flutter build linux --release
 
-# 9. Deploy Flutter app
+# 8. Deploy Flutter app
 log_info "Deploying Flutter application..."
 sudo mkdir -p /opt/blackbox_flutter
 sudo cp -r build/linux/arm64/release/bundle/* /opt/blackbox_flutter/
 sudo chmod +x /opt/blackbox_flutter/blackbox_flutter
 sudo chown -R blackbox:blackbox /opt/blackbox_flutter
 
-# 10. Create optimized .xinitrc
+# 9. Create optimized .xinitrc
 log_info "Creating X11 configuration..."
 cat > ~/.xinitrc << 'EOF'
 #!/bin/sh
