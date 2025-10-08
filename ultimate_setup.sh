@@ -42,13 +42,20 @@ sudo apt install -y \
     python3-pip python3-venv python3-pil python3-dev \
     ffmpeg fonts-dejavu avahi-daemon network-manager \
     xserver-xorg xinit openbox unclutter \
-    libgtk-3-0 libgtk-3-dev libgles2-mesa-dev \
-    liblzma-dev libmpv1 libmpv-dev \
+    libgtk-3-dev libgles2-mesa-dev \
+    liblzma-dev \
     gstreamer1.0-plugins-base gstreamer1.0-plugins-good \
     gstreamer1.0-plugins-bad gstreamer1.0-libav libgstreamer1.0-dev \
     bluez bluez-tools \
     device-tree-compiler \
     python3-rpi-lgpio python3-lgpio python3-spidev
+
+# Install GTK3 (handle different package names)
+sudo apt install -y libgtk-3-0 || sudo apt install -y libgtk-3-0t64 || true
+
+# Install MPV (handle different package names)  
+sudo apt install -y libmpv1 || sudo apt install -y libmpv2 || sudo apt install -y mpv || true
+sudo apt install -y libmpv-dev || true
 
 # 3. Configure HyperPixel 4.0
 log_info "Configuring HyperPixel 4.0 display..."
