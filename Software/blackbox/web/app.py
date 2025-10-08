@@ -965,6 +965,40 @@ def create_app() -> Flask:
             return jsonify({'status': 'idle'})
         return jsonify({'status': 'not_supported'})
 
+    @app.post('/api/transcription/start')
+    def api_transcription_start():
+        try:
+            # Queue all video files for transcription
+            root = paths.trip_root()
+            video_files = list(_iter_media(root, VIDEO_EXTS))
+            
+            queued_count = 0
+            for video_file in video_files:
+                rel_path = str(video_file.relative_to(paths.trip_root()))
+                try:
+                    # Check if already transcribed
+                    existing = transcription_queue.get(rel_path)
+                    if existing and existing.get('transcript'):
+                        continue  # Skip already transcribed files
+                    
+                    # Queue for transcription
+                    transcription_queue.enqueue(rel_path)
+                    queued_count += 1
+                except Exception:
+                    continue  # Skip files that can't be queued
+            
+            return jsonify({
+                'status': 'started',
+                'queued_files': queued_count,
+                'total_files': len(video_files),
+                'message': f'Queued {queued_count} videos for transcription'
+            })
+        except Exception as exc:
+            return jsonify({
+                'status': 'error',
+                'message': f'Failed to start transcription: {exc}'
+            }), 500
+
     @app.get('/api/photos')
     def api_photos():
         root = paths.photos_dir()

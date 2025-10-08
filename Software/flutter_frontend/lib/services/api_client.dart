@@ -159,6 +159,16 @@ class ApiClient {
     }
   }
 
+  Future<Map<String, dynamic>> startTranscription() async {
+    final uri = _resolve('/api/transcription/start');
+    final response = await _client.post(uri);
+    if (response.statusCode != 200) {
+      throw ApiException('Failed to start transcription (${response.statusCode})');
+    }
+    final jsonMap = json.decode(response.body) as Map<String, dynamic>;
+    return jsonMap;
+  }
+
   Future<Map<String, dynamic>> fetchConfig() async {
     final uri = _resolve('/api/config');
     final response = await _client.get(uri);

@@ -159,6 +159,26 @@ class _BackupBody extends ConsumerWidget {
       }
     }
 
+    Future<void> triggerStartTranscription() async {
+      final api = ref.read(apiClientProvider);
+      try {
+        await api.startTranscription();
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Transcription started')),
+          );
+        }
+      } catch (error) {
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Failed to start transcription: ${error.toString()}'),
+            ),
+          );
+        }
+      }
+    }
+
     final infoTiles = [
       InfoTile(
         label: context.tr('backup.info.transfer'),
@@ -375,6 +395,15 @@ class _BackupBody extends ConsumerWidget {
                   : null,
               icon: const Icon(Icons.stop_circle_rounded),
               label: Text(context.tr('backup.actions.cancel')),
+            ),
+            OutlinedButton.icon(
+              onPressed: status.isActive
+                  ? null
+                  : () {
+                      triggerStartTranscription();
+                    },
+              icon: const Icon(Icons.mic_rounded),
+              label: const Text('Start Transcriptie'),
             ),
             TextButton.icon(
               onPressed: () {
