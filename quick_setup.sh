@@ -22,9 +22,24 @@ sudo apt install -y \
   xinit \
   openbox \
   libgtk-3-0 \
+  libgtk-3-dev \
   device-tree-compiler \
   curl \
-  build-essential
+  build-essential \
+  cmake \
+  ninja-build \
+  pkg-config \
+  clang \
+  liblzma-dev \
+  libmpv1 \
+  libmpv-dev \
+  gstreamer1.0-plugins-base \
+  gstreamer1.0-plugins-good \
+  gstreamer1.0-plugins-bad \
+  gstreamer1.0-libav \
+  libgstreamer1.0-dev \
+  bluez \
+  bluez-tools
 
 # Enable NetworkManager for AP mode
 sudo systemctl enable --now NetworkManager
@@ -65,7 +80,7 @@ sudo systemctl enable --now blackbox.service blackbox-web.service blackbox-power
 
 # Add user to groups (NO gpio/spi groups - HyperPixel doesn't need them)
 echo "👤 Adding user to required groups..."
-sudo usermod -aG video,input "$USER"
+sudo usermod -aG video,input,netdev,bluetooth "$USER"
 
 # Create data directory
 echo "💾 Setting up data directory..."

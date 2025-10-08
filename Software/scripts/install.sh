@@ -99,13 +99,25 @@ if command -v apt-get >/dev/null 2>&1; then
     openbox \
     gstreamer1.0-plugins-base \
     gstreamer1.0-plugins-good \
+    gstreamer1.0-plugins-bad \
     gstreamer1.0-libav \
+    libgstreamer1.0-dev \
     libgtk-3-0 \
+    libgtk-3-dev \
     libstdc++6 \
     liblzma5 \
+    liblzma-dev \
     libglu1-mesa \
+    libmpv1 \
+    libmpv-dev \
     weston \
-    xwayland || true
+    xwayland \
+    cmake \
+    ninja-build \
+    pkg-config \
+    clang \
+    bluez \
+    bluez-tools || true
   # NetworkManager for AP-mode (optional)
   sudo apt-get install -y network-manager || true
 fi

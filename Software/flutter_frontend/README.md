@@ -12,7 +12,8 @@ A Flutter-based touchscreen interface that mirrors the key flows from the e-pape
 ## Requirements
 - Flutter 3.16 or newer (Dart 3.1+) on the Raspberry Pi or a Linux workstation
 - Raspberry Pi OS Lite (Bookworm) with the Flask backend (`blackbox-web`) running
-- GStreamer packages for video playback on Linux: `sudo apt install gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-libav`
+- GStreamer packages for video playback on Linux: `sudo apt install gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-plugins-bad gstreamer1.0-libav`
+- MPV runtime libraries for the media_kit backend: `sudo apt install libmpv1 libmpv-dev`
 - Fonts: the default Roboto shipped with Flutter is used; add extra fonts if desired
 
 ## Getting Started
@@ -71,5 +72,5 @@ Ensure the Flask app is running (via `blackbox-web.service`) before launching th
 
 ## Notes
 - Cancellation is not yet implemented server-side; the UI hides the button until that lands.
-- Video playback relies on the system GStreamer stack. If playback is blank, confirm the plugins listed above are installed.
+- Video playback relies on the system GStreamer + MPV stack. If playback is blank, confirm both the GStreamer plugins and `libmpv` packages above are installed.
 - The UI defaults to landscape orientation; remove or adjust the orientation pin in `lib/main.dart` if you mount the display differently.
