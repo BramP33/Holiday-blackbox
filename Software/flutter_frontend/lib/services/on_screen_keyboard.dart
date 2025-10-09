@@ -2,21 +2,35 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 
 class OnScreenKeyboardController {
-  OnScreenKeyboardController({this.program = 'onboard', this.hideDelay = const Duration(milliseconds: 400)}) {
+  OnScreenKeyboardController({
+    String? program,
+    List<String>? fallbackPrograms,
+    this.hideDelay = const Duration(milliseconds: 400),
+    this.autoDismissOnEnter = true,
+  }) : _programCandidates = _buildProgramCandidates(program, fallbackPrograms) {
     FocusManager.instance.addListener(_handleFocusChange);
+    RawKeyboard.instance.addListener(_handleRawKey);
+    _handleFocusChange();
   }
 
-  final String program;
+  final List<String> _programCandidates;
   final Duration hideDelay;
+  final bool autoDismissOnEnter;
 
   Process? _process;
   Timer? _hideTimer;
+  bool _isLaunching = false;
+  String? _activeProgram;
+  final Set<String> _failedCandidates = <String>{};
+  bool _reportedExhausted = false;
 
   void dispose() {
     FocusManager.instance.removeListener(_handleFocusChange);
+    RawKeyboard.instance.removeListener(_handleRawKey);
     _hideTimer?.cancel();
     _hideTimer = null;
     _stopKeyboard();
@@ -63,24 +77,54 @@ class OnScreenKeyboardController {
     if (_process != null) {
       return;
     }
+    if (_isLaunching) {
+      return;
+    }
+    if (kIsWeb) {
+      return;
+    }
+    if (!Platform.isLinux) {
+      return;
+    }
+    _isLaunching = true;
     try {
-      final process = await Process.start(program, const []);
-      _process = process;
-      unawaited(process.exitCode.then((_) {
-        if (identical(_process, process)) {
-          _process = null;
+      for (final candidate in _programCandidates) {
+        try {
+          final process = await Process.start(candidate, const []);
+          _process = process;
+          _activeProgram = candidate;
+          _failedCandidates.remove(candidate);
+          _reportedExhausted = false;
+          unawaited(process.exitCode.then((_) {
+            if (identical(_process, process)) {
+              _process = null;
+              _activeProgram = null;
+            }
+          }));
+          return;
+        } catch (error, stackTrace) {
+          final firstFailure = _failedCandidates.add(candidate);
+          if (firstFailure) {
+            debugPrint('Failed to launch $candidate: $error');
+            debugPrint('$stackTrace');
+          }
         }
-      }));
-    } catch (error, stackTrace) {
-      debugPrint('Failed to launch $program: $error');
-      debugPrint('$stackTrace');
-      _process = null;
+      }
+      if (!_reportedExhausted) {
+        _reportedExhausted = true;
+        debugPrint(
+            'No on-screen keyboard candidates available: $_programCandidates');
+      }
+    } finally {
+      _isLaunching = false;
     }
   }
 
   void _stopKeyboard() {
     final process = _process;
+    final activeProgram = _activeProgram;
     _process = null;
+    _activeProgram = null;
     _hideTimer?.cancel();
     _hideTimer = null;
     if (process == null) {
@@ -91,8 +135,52 @@ class OnScreenKeyboardController {
         process.kill();
       }
     } catch (error, stackTrace) {
-      debugPrint('Failed to stop $program: $error');
+      debugPrint('Failed to stop ${activeProgram ?? 'keyboard'}: $error');
       debugPrint('$stackTrace');
     }
+  }
+
+  void hideKeyboard({bool releaseFocus = false}) {
+    if (_process == null) {
+      return;
+    }
+    _stopKeyboard();
+    if (releaseFocus) {
+      FocusManager.instance.primaryFocus?.unfocus();
+    }
+  }
+
+  void _handleRawKey(RawKeyEvent event) {
+    if (!autoDismissOnEnter) {
+      return;
+    }
+    if (_process == null) {
+      return;
+    }
+    if (event is! RawKeyDownEvent) {
+      return;
+    }
+    final logicalKey = event.logicalKey;
+    if (logicalKey != LogicalKeyboardKey.enter &&
+        logicalKey != LogicalKeyboardKey.numpadEnter) {
+      return;
+    }
+    if (event.isShiftPressed ||
+        event.isAltPressed ||
+        event.isControlPressed ||
+        event.isMetaPressed) {
+      return;
+    }
+    hideKeyboard(releaseFocus: true);
+  }
+
+  static List<String> _buildProgramCandidates(
+      String? program, List<String>? fallbackPrograms) {
+    final candidates = <String>{
+      if (program != null) program,
+      ...(fallbackPrograms ??
+          const ['onboard', 'matchbox-keyboard', 'florence']),
+    };
+    return candidates.toList(growable: false);
   }
 }

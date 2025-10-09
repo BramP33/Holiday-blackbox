@@ -29,6 +29,7 @@ class BlackboxApp extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    ref.read(onScreenKeyboardControllerProvider);
     final locale = ref.watch(localeProvider);
     return MaterialApp(
       locale: locale,

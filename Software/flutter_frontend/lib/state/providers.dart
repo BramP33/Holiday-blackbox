@@ -26,7 +26,8 @@ final tripStatsProvider = FutureProvider.autoDispose<TripStats>((ref) async {
   return stats;
 });
 
-final photosProvider = FutureProvider.autoDispose.family<MediaPage<PhotoItem>, int>((ref, page) async {
+final photosProvider = FutureProvider.autoDispose
+    .family<MediaPage<PhotoItem>, int>((ref, page) async {
   final api = ref.watch(apiClientProvider);
   final result = await api.fetchPhotos(page: page);
   return result;
@@ -53,18 +54,22 @@ class VideoRequest {
   int get hashCode => Object.hash(page, query);
 }
 
-final videosProvider = FutureProvider.autoDispose.family<MediaPage<VideoRecord>, VideoRequest>((ref, request) async {
+final videosProvider = FutureProvider.autoDispose
+    .family<MediaPage<VideoRecord>, VideoRequest>((ref, request) async {
   final api = ref.watch(apiClientProvider);
-  final result = await api.fetchVideos(page: request.page, query: request.query);
+  final result =
+      await api.fetchVideos(page: request.page, query: request.query);
   return result;
 });
 
-final trashEntriesProvider = FutureProvider.autoDispose<List<TrashEntry>>((ref) async {
+final trashEntriesProvider =
+    FutureProvider.autoDispose<List<TrashEntry>>((ref) async {
   final api = ref.watch(apiClientProvider);
   return api.fetchTrashEntries();
 });
 
-final backupStatusProvider = FutureProvider.autoDispose<BackupStatus>((ref) async {
+final backupStatusProvider =
+    FutureProvider.autoDispose<BackupStatus>((ref) async {
   final api = ref.watch(apiClientProvider);
   final json = await api.fetchBackupStatus();
   return BackupStatus.fromJson(json);
@@ -92,8 +97,12 @@ final localeProvider = StateNotifierProvider<LocaleController, Locale>((ref) {
   return controller;
 });
 
-final onScreenKeyboardControllerProvider = Provider<OnScreenKeyboardController>((ref) {
-  final controller = OnScreenKeyboardController();
+final onScreenKeyboardControllerProvider =
+    Provider<OnScreenKeyboardController>((ref) {
+  final controller = OnScreenKeyboardController(
+    program: 'matchbox-keyboard',
+    fallbackPrograms: const ['onboard', 'florence'],
+  );
   ref.onDispose(controller.dispose);
   return controller;
 });
