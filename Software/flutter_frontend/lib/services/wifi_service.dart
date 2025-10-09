@@ -1,7 +1,11 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:connectivity_plus/connectivity_plus.dart';
+import 'package:http/http.dart' as http;
+
+import 'api_client.dart';
 
 // Enable debug logging
 const bool _kDebugWiFi = true;
@@ -432,5 +436,77 @@ class WiFiService {
       isConnected: network.ssid == currentSsid,
       isKnown: knownConnections.containsKey(network.ssid),
     )).toList();
+  }
+
+  // Access Point functionality
+  Future<Map<String, dynamic>> getApStatus() async {
+    _debugLog('Getting AP status...');
+    try {
+      final response = await http.get(
+        Uri.parse('${apiClient.baseUrl}/api/ap/status'),
+        headers: {'Accept': 'application/json'},
+      );
+
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body) as Map<String, dynamic>;
+        _debugLog('AP status: ${data['active'] ? 'active' : 'inactive'}');
+        return data;
+      } else {
+        throw Exception('Failed to get AP status: ${response.statusCode}');
+      }
+    } catch (e) {
+      _debugLog('Error getting AP status: $e');
+      rethrow;
+    }
+  }
+
+  Future<bool> startAccessPoint() async {
+    _debugLog('Starting Access Point...');
+    try {
+      final response = await http.post(
+        Uri.parse('${apiClient.baseUrl}/api/ap/start'),
+        headers: {'Accept': 'application/json'},
+      );
+
+      final data = json.decode(response.body) as Map<String, dynamic>;
+      
+      if (response.statusCode == 200 && data['success'] == true) {
+        _debugLog('Access Point started successfully');
+        // When AP starts, WiFi client mode should be disabled
+        await _updateCurrentNetwork();
+        return true;
+      } else {
+        final error = data['error'] ?? 'Unknown error starting AP';
+        _debugLog('Failed to start AP: $error');
+        throw Exception(error);
+      }
+    } catch (e) {
+      _debugLog('Error starting Access Point: $e');
+      rethrow;
+    }
+  }
+
+  Future<bool> stopAccessPoint() async {
+    _debugLog('Stopping Access Point...');
+    try {
+      final response = await http.post(
+        Uri.parse('${apiClient.baseUrl}/api/ap/stop'),
+        headers: {'Accept': 'application/json'},
+      );
+
+      final data = json.decode(response.body) as Map<String, dynamic>;
+      
+      if (response.statusCode == 200 && data['success'] == true) {
+        _debugLog('Access Point stopped successfully');
+        return true;
+      } else {
+        final error = data['error'] ?? 'Unknown error stopping AP';
+        _debugLog('Failed to stop AP: $error');
+        throw Exception(error);
+      }
+    } catch (e) {
+      _debugLog('Error stopping Access Point: $e');
+      rethrow;
+    }
   }
 }

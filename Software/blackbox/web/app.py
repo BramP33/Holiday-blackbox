@@ -24,6 +24,7 @@ from ..stats import collect_trip_media_stats
 from ..backup.scanner import find_source_mounts
 from ..hardware.usb import ensure_usb_mounted
 from ..health import collect_health
+from ..ap_mode import start_ap, stop_ap, get_ap_address
 
 def create_app() -> Flask:
     cfg = load_config()
@@ -1399,6 +1400,74 @@ def create_app() -> Flask:
         # Redirect back to referrer or photos
         ref = request.headers.get('Referer')
         return redirect(ref or url_for('photos'))
+
+    # Access Point API endpoints
+    @app.get('/api/ap/status')
+    def api_ap_status():
+        """Get current AP status"""
+        try:
+            import subprocess
+            # Check if hotspot is active
+            result = subprocess.run(['nmcli', '-t', '-f', 'NAME', 'con', 'show', '--active'], 
+                                  capture_output=True, text=True)
+            is_active = 'Hotspot' in result.stdout
+            
+            # Get AP configuration
+            cfg_local = load_config()
+            ap_config = cfg_local.get('ap', {})
+            
+            ap_address = None
+            if is_active:
+                ap_address = get_ap_address()
+            
+            return jsonify({
+                'active': is_active,
+                'ssid': ap_config.get('ssid', 'Blackbox'),
+                'address': ap_address,
+                'generated_at': dt.datetime.now().isoformat()
+            })
+        except Exception as e:
+            return jsonify({'error': str(e)}), 500
+
+    @app.post('/api/ap/start')
+    def api_ap_start():
+        """Start Access Point mode"""
+        try:
+            result_code = start_ap()
+            if result_code == 0:
+                return jsonify({
+                    'success': True,
+                    'address': get_ap_address(),
+                    'message': 'Access Point started successfully'
+                })
+            else:
+                error_msg = 'Failed to start Access Point'
+                if result_code == 127:
+                    error_msg = 'NetworkManager (nmcli) not available'
+                elif result_code == 400:
+                    error_msg = 'Invalid AP password configuration'
+                elif result_code == 401:
+                    error_msg = 'Not authorized to create hotspot'
+                
+                return jsonify({
+                    'success': False,
+                    'error': error_msg,
+                    'code': result_code
+                }), 400
+        except Exception as e:
+            return jsonify({'success': False, 'error': str(e)}), 500
+
+    @app.post('/api/ap/stop')
+    def api_ap_stop():
+        """Stop Access Point mode"""
+        try:
+            result_code = stop_ap()
+            return jsonify({
+                'success': True,
+                'message': 'Access Point stopped successfully'
+            })
+        except Exception as e:
+            return jsonify({'success': False, 'error': str(e)}), 500
 
     return app
 

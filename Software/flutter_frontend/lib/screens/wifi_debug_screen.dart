@@ -12,6 +12,10 @@ class _WiFiDebugScreenState extends State<WiFiDebugScreen> {
   final WiFiService _wifiService = WiFiService.instance;
   bool _isInitialized = false;
   bool _isScanning = false;
+  bool _apActive = false;
+  bool _apOperationInProgress = false;
+  String? _apAddress;
+  String? _apSSID;
   List<WiFiNetwork> _networks = [];
   WiFiNetwork? _currentNetwork;
   String _logs = '';
@@ -30,6 +34,9 @@ class _WiFiDebugScreenState extends State<WiFiDebugScreen> {
         _isInitialized = true;
       });
       _addLog('WiFi service initialized successfully');
+      
+      // Check initial AP status
+      await _checkApStatus();
       
       // Listen to streams
       _wifiService.networksStream.listen((networks) {
@@ -81,6 +88,70 @@ class _WiFiDebugScreenState extends State<WiFiDebugScreen> {
     }
   }
 
+  Future<void> _checkApStatus() async {
+    _addLog('Checking Access Point status...');
+    try {
+      final status = await _wifiService.getApStatus();
+      setState(() {
+        _apActive = status['active'] ?? false;
+        _apAddress = status['address'];
+        _apSSID = status['ssid'];
+      });
+      _addLog('AP Status - Active: $_apActive, SSID: $_apSSID');
+      if (_apAddress != null) {
+        _addLog('AP Address: $_apAddress');
+      }
+    } catch (e) {
+      _addLog('Error checking AP status: $e');
+    }
+  }
+
+  Future<void> _startAccessPoint() async {
+    if (_apOperationInProgress) return;
+    
+    setState(() {
+      _apOperationInProgress = true;
+    });
+    
+    _addLog('Starting Access Point...');
+    try {
+      final success = await _wifiService.startAccessPoint();
+      if (success) {
+        _addLog('Access Point started successfully');
+        await _checkApStatus();
+      }
+    } catch (e) {
+      _addLog('Failed to start Access Point: $e');
+    } finally {
+      setState(() {
+        _apOperationInProgress = false;
+      });
+    }
+  }
+
+  Future<void> _stopAccessPoint() async {
+    if (_apOperationInProgress) return;
+    
+    setState(() {
+      _apOperationInProgress = true;
+    });
+    
+    _addLog('Stopping Access Point...');
+    try {
+      final success = await _wifiService.stopAccessPoint();
+      if (success) {
+        _addLog('Access Point stopped successfully');
+        await _checkApStatus();
+      }
+    } catch (e) {
+      _addLog('Failed to stop Access Point: $e');
+    } finally {
+      setState(() {
+        _apOperationInProgress = false;
+      });
+    }
+  }
+
   void _addLog(String message) {
     final timestamp = DateTime.now().toString().substring(11, 19);
     setState(() {
@@ -124,6 +195,23 @@ class _WiFiDebugScreenState extends State<WiFiDebugScreen> {
                     Text('Initialized: $_isInitialized'),
                     Text('Current Network: ${_currentNetwork?.ssid ?? 'None'}'),
                     Text('Known Networks: ${_networks.length}'),
+                    const SizedBox(height: 16),
+                    Text('Access Point', style: Theme.of(context).textTheme.titleMedium),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        Icon(
+                          _apActive ? Icons.wifi_tethering : Icons.wifi_tethering_off,
+                          color: _apActive ? Colors.green : Colors.grey,
+                        ),
+                        const SizedBox(width: 8),
+                        Text('Status: ${_apActive ? 'Active' : 'Inactive'}'),
+                      ],
+                    ),
+                    if (_apActive && _apSSID != null)
+                      Text('SSID: $_apSSID'),
+                    if (_apActive && _apAddress != null)
+                      Text('Address: $_apAddress'),
                   ],
                 ),
               ),
@@ -134,6 +222,7 @@ class _WiFiDebugScreenState extends State<WiFiDebugScreen> {
             // Actions section
             Wrap(
               spacing: 8,
+              runSpacing: 8,
               children: [
                 ElevatedButton(
                   onPressed: _checkNetworkManager,
@@ -144,6 +233,30 @@ class _WiFiDebugScreenState extends State<WiFiDebugScreen> {
                   child: _isScanning 
                       ? const Text('Scanning...') 
                       : const Text('Scan Networks'),
+                ),
+                ElevatedButton(
+                  onPressed: _checkApStatus,
+                  child: const Text('Check AP Status'),
+                ),
+                ElevatedButton(
+                  onPressed: _apOperationInProgress || _apActive ? null : _startAccessPoint,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.green,
+                    foregroundColor: Colors.white,
+                  ),
+                  child: _apOperationInProgress 
+                      ? const Text('Starting...') 
+                      : const Text('Start AP'),
+                ),
+                ElevatedButton(
+                  onPressed: _apOperationInProgress || !_apActive ? null : _stopAccessPoint,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.red,
+                    foregroundColor: Colors.white,
+                  ),
+                  child: _apOperationInProgress 
+                      ? const Text('Stopping...') 
+                      : const Text('Stop AP'),
                 ),
               ],
             ),
