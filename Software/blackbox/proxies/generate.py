@@ -11,24 +11,105 @@ _FAILED_ENCODERS: set[str] = set()
 
 
 def _run(cmd: list[str], background_priority: bool = False) -> int:
-    """Run command with configurable priority to avoid overwhelming the system."""
+    """Run command with configurable priority and resource limits to avoid overwhelming the system."""
     import subprocess
+    import signal
+    import psutil
+    import time
     
     # Use nice to lower the process priority (higher nice value = lower priority)
     # Normal: nice 10, Background: nice 19 (lowest priority)
     nice_value = '19' if background_priority else '10'
     nice_cmd = ['nice', '-n', nice_value] + cmd
     
+    # Add ionice for background processes to reduce I/O impact
+    if background_priority:
+        try:
+            # ionice -c 3 = idle I/O priority
+            nice_cmd = ['ionice', '-c', '3'] + nice_cmd
+        except:
+            pass  # ionice might not be available
+    
+    def timeout_handler(signum, frame):
+        raise TimeoutError("Process timeout")
+    
+    # Set a reasonable timeout (5 minutes per file)
+    timeout_seconds = 300
+    
     try:
-        # Also set additional process limits
-        return subprocess.call(
-            nice_cmd, 
-            # Redirect stderr to avoid cluttering logs during normal operation
-            stderr=subprocess.DEVNULL if not os.environ.get('DEBUG_FFMPEG') else None
+        # Set timeout handler
+        signal.signal(signal.SIGALRM, timeout_handler)
+        signal.alarm(timeout_seconds)
+        
+        # Start process with additional limits
+        process = subprocess.Popen(
+            nice_cmd,
+            stderr=subprocess.DEVNULL if not os.environ.get('DEBUG_FFMPEG') else None,
+            stdout=subprocess.DEVNULL if not os.environ.get('DEBUG_FFMPEG') else None
         )
+        
+        # Monitor memory usage and kill if excessive
+        max_memory_mb = 512  # 512MB limit
+        check_interval = 1.0  # Check every second
+        
+        while process.poll() is None:
+            try:
+                # Get process and children
+                parent = psutil.Process(process.pid)
+                children = parent.children(recursive=True)
+                total_memory = parent.memory_info().rss
+                
+                for child in children:
+                    try:
+                        total_memory += child.memory_info().rss
+                    except (psutil.NoSuchProcess, psutil.AccessDenied):
+                        pass
+                
+                # Convert to MB
+                memory_mb = total_memory / (1024 * 1024)
+                
+                if memory_mb > max_memory_mb:
+                    print(f"Warning: FFmpeg process using {memory_mb:.1f}MB, killing...")
+                    parent.kill()
+                    for child in children:
+                        try:
+                            child.kill()
+                        except (psutil.NoSuchProcess, psutil.AccessDenied):
+                            pass
+                    process.wait()
+                    return 1
+                    
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                break  # Process ended
+            
+            time.sleep(check_interval)
+        
+        # Disable alarm
+        signal.alarm(0)
+        return process.returncode
+        
+    except TimeoutError:
+        print("Warning: FFmpeg process timeout, killing...")
+        try:
+            process.kill()
+            process.wait()
+        except:
+            pass
+        return 1
     except FileNotFoundError:
         # Fallback if 'nice' command is not available
+        signal.alarm(0)
         return subprocess.call(cmd)
+    except Exception as e:
+        print(f"Warning: Process execution error: {e}")
+        signal.alarm(0)
+        try:
+            if 'process' in locals():
+                process.kill()
+                process.wait()
+        except:
+            pass
+        return 1
 
 
 def ensure_cache_limit(cache_dir: Path, max_bytes: int) -> None:
@@ -102,7 +183,7 @@ def build_video_proxy(
     background_priority: bool = False,
 ) -> int:
     """
-    Build a video proxy with configurable CPU usage.
+    Build a video proxy with configurable CPU usage and robust error handling.
     
     Args:
         src: Source video file
@@ -112,50 +193,96 @@ def build_video_proxy(
         encoder: Specific encoder to use, or None for auto-selection
         background_priority: If True, use minimal CPU to avoid interfering with UI
     """
-    dst.parent.mkdir(parents=True, exist_ok=True)
-    preferred: list[str] = []
+    try:
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        
+        # Check source file
+        if not src.exists():
+            print(f"Warning: Source file does not exist: {src}")
+            return 1
+            
+        # Check available disk space
+        try:
+            import shutil
+            free_space = shutil.disk_usage(dst.parent).free
+            # Require at least 100MB free space
+            if free_space < 100 * 1024 * 1024:
+                print(f"Warning: Insufficient disk space for proxy generation")
+                return 1
+        except Exception:
+            pass  # Continue if disk space check fails
+        
+        preferred: list[str] = []
 
-    if encoder is not None:
-        raw = encoder.strip()
-        normalized = raw.lower()
-        if not raw or normalized == 'auto':
-            # Try H.264 hardware first, then H.265 hardware, then CPU
-            preferred.extend(['h264_v4l2m2m', 'hevc_v4l2m2m', 'libx264'])
-        elif normalized in {'cpu', 'software', 'none', 'disabled', 'off'}:
-            preferred.append('libx264')
-        elif normalized in {'h265', 'hevc'}:
-            # H.265 specific request
-            preferred.extend(['hevc_v4l2m2m', 'libx265'])
+        if encoder is not None:
+            raw = encoder.strip()
+            normalized = raw.lower()
+            if not raw or normalized == 'auto':
+                # Try H.264 hardware first, then H.265 hardware, then CPU
+                preferred.extend(['h264_v4l2m2m', 'hevc_v4l2m2m', 'libx264'])
+            elif normalized in {'cpu', 'software', 'none', 'disabled', 'off'}:
+                preferred.append('libx264')
+            elif normalized in {'h265', 'hevc'}:
+                # H.265 specific request
+                preferred.extend(['hevc_v4l2m2m', 'libx265'])
+            else:
+                preferred.append(raw)
         else:
-            preferred.append(raw)
-    else:
-        # Default: try H.264 hardware, then H.265 hardware, then CPU fallback
-        preferred.extend(['h264_v4l2m2m', 'hevc_v4l2m2m', 'libx264'])
+            # Default: try H.264 hardware, then H.265 hardware, then CPU fallback
+            preferred.extend(['h264_v4l2m2m', 'hevc_v4l2m2m', 'libx264'])
 
-    # Always ensure we have a CPU fallback
-    if 'libx264' not in preferred and 'libx265' not in preferred:
-        preferred.append('libx264')
+        # Always ensure we have a CPU fallback
+        if 'libx264' not in preferred and 'libx265' not in preferred:
+            preferred.append('libx264')
 
-    exit_code = 1
-    seen: set[str] = set()
-    for current in preferred:
-        if current in seen:
-            continue
-        seen.add(current)
-        if current not in {'libx264', 'libx265'} and current in _FAILED_ENCODERS:
-            continue
-        cmd = _video_proxy_cmd(src, dst, height, bitrate, current, background_priority)
-        exit_code = _run(cmd, background_priority)
-        if exit_code == 0:
-            return 0
-        if current not in {'libx264', 'libx265'}:
-            _FAILED_ENCODERS.add(current)
+        exit_code = 1
+        seen: set[str] = set()
+        for current in preferred:
+            if current in seen:
+                continue
+            seen.add(current)
+            if current not in {'libx264', 'libx265'} and current in _FAILED_ENCODERS:
+                continue
+            
             try:
-                dst.unlink()
-            except OSError:
-                pass
+                cmd = _video_proxy_cmd(src, dst, height, bitrate, current, background_priority)
+                exit_code = _run(cmd, background_priority)
+                if exit_code == 0:
+                    # Verify output file was created successfully
+                    if dst.exists() and dst.stat().st_size > 0:
+                        return 0
+                    else:
+                        print(f"Warning: Encoder {current} completed but output file is invalid")
+                        exit_code = 1
+                        
+                if current not in {'libx264', 'libx265'}:
+                    _FAILED_ENCODERS.add(current)
+                    try:
+                        if dst.exists():
+                            dst.unlink()
+                    except OSError:
+                        pass
+            except Exception as e:
+                print(f"Warning: Error with encoder {current}: {e}")
+                if current not in {'libx264', 'libx265'}:
+                    _FAILED_ENCODERS.add(current)
+                try:
+                    if dst.exists():
+                        dst.unlink()
+                except OSError:
+                    pass
+                continue
 
-    return exit_code
+        return exit_code
+        
+    except Exception as e:
+        print(f"Error in build_video_proxy: {e}")
+        try:
+            if dst.exists():
+                dst.unlink()
+        except OSError:
+            pass
+        return 1
 
 
 def build_video_thumb(src: Path, dst: Path, size: int = 720, background_priority: bool = False) -> int:
@@ -235,19 +362,33 @@ def generate_for_folder(
         except Exception:
             pass
 
-    # Execute tasks
+    # Execute tasks with better error handling
     for kind, src, dst in tasks:
-        if kind == 'video':
-            build_video_proxy(src, dst, height=height, bitrate=bitrate, encoder=encoder, background_priority=background_priority)
-        elif kind == 'photo':
-            build_photo_thumb(src, dst)
-        else:
-            build_video_thumb(src, dst, background_priority=background_priority)
+        try:
+            if kind == 'video':
+                result = build_video_proxy(src, dst, height=height, bitrate=bitrate, encoder=encoder, background_priority=background_priority)
+                if result != 0:
+                    print(f"Warning: Failed to generate proxy for {src}")
+            elif kind == 'photo':
+                result = build_photo_thumb(src, dst)
+                if result != 0:
+                    print(f"Warning: Failed to generate photo thumbnail for {src}")
+            else:
+                result = build_video_thumb(src, dst, background_priority=background_priority)
+                if result != 0:
+                    print(f"Warning: Failed to generate video thumbnail for {src}")
+        except Exception as e:
+            print(f"Error processing {src}: {e}")
+            # Continue with next file instead of crashing
+            
         done += 1
         if progress_cb:
             try:
                 progress_cb(done, total, src, kind)
-            except Exception:
-                pass
+            except Exception as e:
+                print(f"Warning: Progress callback error: {e}")
 
-    ensure_cache_limit(cache_dir, max_cache_bytes)
+    try:
+        ensure_cache_limit(cache_dir, max_cache_bytes)
+    except Exception as e:
+        print(f"Warning: Cache cleanup error: {e}")

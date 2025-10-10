@@ -103,9 +103,14 @@ class _BackupBody extends ConsumerWidget {
     final manifestValue = status.totalFiles > 0
         ? '$processedFiles/${status.totalFiles}'
         : processedFiles.toString();
-    final previewValue = status.previewsTotal > 0
-        ? '${status.previewsDone}/${status.previewsTotal}'
-        : '--';
+    final previewValue = status.proxyJobsTotal > 0
+        ? '${status.proxyJobsDone}/${status.proxyJobsTotal}'
+        : status.previewsTotal > 0
+            ? '${status.previewsDone}/${status.previewsTotal}'
+            : '--';
+    final transcriptionValue = status.transcriptionTotal > 0
+        ? '${status.transcriptionDone}/${status.transcriptionTotal}'
+        : null;
     final statusMessage = status.message?.isNotEmpty == true
         ? status.message!
         : _defaultLogMessage(context, status);
@@ -278,7 +283,6 @@ class _BackupBody extends ConsumerWidget {
           child: LayoutBuilder(
             builder: (context, constraints) {
               final available = constraints.maxWidth;
-              final gaugeSize = ScreenLayout.gaugeSizeForWidth(available);
               final isTarget = ScreenLayout.isTargetSize(context);
               final compactThreshold = isTarget ? 820 : 720;
               final columns = available > (isTarget ? 960 : 1024)
@@ -308,12 +312,59 @@ class _BackupBody extends ConsumerWidget {
                     .toList(growable: false),
               );
 
-              final gaugeWidget = CompassGauge(
-                value: gaugeValue,
-                indeterminate: isIndeterminate,
-                label: context.tr('backup.gauge.label'),
-                caption: phase.caption,
-                size: gaugeSize,
+              final proxyIndeterminate =
+                  status.proxyJobsTotal <= 0 && status.proxyState == 'running';
+              final transcriptionIndeterminate = status.transcriptionTotal <= 0 &&
+                  (status.transcriptionState == 'processing' ||
+                      status.transcriptionState == 'pending');
+              final gaugeConfigs = <_GaugeDescriptor>[
+                _GaugeDescriptor(
+                  label: context.tr('backup.gauge.label'),
+                  caption: phase.caption,
+                  value: _clampGaugeValue(gaugeValue),
+                  indeterminate: isIndeterminate,
+                ),
+                _GaugeDescriptor(
+                  label: context.tr('backup.gauge.proxy.label'),
+                  caption: _proxyCaption(context, status),
+                  value: _clampGaugeValue(status.proxyCompletion),
+                  indeterminate: proxyIndeterminate,
+                ),
+                _GaugeDescriptor(
+                  label: context.tr('backup.gauge.transcription.label'),
+                  caption: _transcriptionCaption(context, status),
+                  value: _clampGaugeValue(status.transcriptionCompletion),
+                  indeterminate: transcriptionIndeterminate,
+                ),
+              ];
+              final gaugeCount = gaugeConfigs.length;
+              final safeWidth =
+                  available.isFinite ? available : ScreenLayout.targetWidth;
+              final gaugeSize = ScreenLayout.gaugeSizeForWidth(
+                gaugeCount > 0 ? safeWidth / gaugeCount : safeWidth,
+              );
+              final gaugeWrap = Wrap(
+                spacing: spacing,
+                runSpacing: spacing,
+                alignment: WrapAlignment.start,
+                children: gaugeConfigs
+                    .map(
+                      (config) => SizedBox(
+                        width: gaugeSize,
+                        child: CompassGauge(
+                          value: config.value,
+                          indeterminate: config.indeterminate,
+                          label: config.label,
+                          caption: config.caption,
+                          size: gaugeSize,
+                        ),
+                      ),
+                    )
+                    .toList(growable: false),
+              );
+              final gaugeCluster = Align(
+                alignment: Alignment.centerLeft,
+                child: gaugeWrap,
               );
 
               final spacingWidget = SizedBox(height: spacing);
@@ -323,13 +374,14 @@ class _BackupBody extends ConsumerWidget {
                 phase,
                 statusMessage: statusMessage,
                 previewValue: previewValue,
+                transcriptionValue: transcriptionValue,
               );
 
               if (isTarget && available < compactThreshold) {
                 return Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Align(alignment: Alignment.centerLeft, child: gaugeWidget),
+                    gaugeCluster,
                     spacingWidget,
                     infoTileBuilder,
                     const SizedBox(height: 20),
@@ -344,7 +396,10 @@ class _BackupBody extends ConsumerWidget {
                   Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      gaugeWidget,
+                      Flexible(
+                        flex: gaugeCount,
+                        child: gaugeCluster,
+                      ),
                       SizedBox(width: spacing),
                       Expanded(child: infoTileBuilder),
                     ],
@@ -372,6 +427,7 @@ List<Widget> _buildStatusDetails(
   _PhaseDescriptor phase, {
   required String statusMessage,
   required String previewValue,
+  String? transcriptionValue,
 }) {
   final theme = Theme.of(context);
   final details = <Widget>[
@@ -424,6 +480,46 @@ List<Widget> _buildStatusDetails(
     );
   }
 
+  if (transcriptionValue != null) {
+    final extras = <String>[];
+    if (status.transcriptionPending > 0) {
+      extras.add(
+        context.tr('backup.info.transcription_pending',
+            params: {'count': status.transcriptionPending.toString()}),
+      );
+    }
+    if (status.transcriptionProcessing > 0) {
+      extras.add(
+        context.tr('backup.info.transcription_processing',
+            params: {'count': status.transcriptionProcessing.toString()}),
+      );
+    }
+    if (status.transcriptionError > 0) {
+      extras.add(
+        context.tr('backup.info.transcription_error',
+            params: {'count': status.transcriptionError.toString()}),
+      );
+    }
+    final suffix = extras.isEmpty ? '' : ' (${extras.join(' • ')})';
+    details.add(
+      Padding(
+        padding: const EdgeInsets.only(top: 8),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.graphic_eq, color: AppColors.sage, size: 18),
+            const SizedBox(width: 8),
+            Text(
+              "${context.tr('backup.info.transcription')}: $transcriptionValue$suffix",
+              style: theme.textTheme.bodySmall
+                  ?.copyWith(color: AppColors.sage, height: 1.3),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   if (status.deviceLabel != null) {
     details.add(
       Padding(
@@ -458,6 +554,82 @@ List<Widget> _buildStatusDetails(
 
   return details;
 }
+
+
+double _clampGaugeValue(double value) {
+  if (value.isNaN || value.isInfinite) {
+    return 0.0;
+  }
+  return value.clamp(0.0, 1.0).toDouble();
+}
+
+class _GaugeDescriptor {
+  const _GaugeDescriptor({
+    required this.label,
+    required this.value,
+    this.caption,
+    this.indeterminate = false,
+  });
+
+  final String label;
+  final double value;
+  final String? caption;
+  final bool indeterminate;
+}
+
+String? _proxyCaption(BuildContext context, BackupStatus status) {
+  final params = {
+    'done': status.proxyJobsDone.toString(),
+    'total': status.proxyJobsTotal > 0
+        ? status.proxyJobsTotal.toString()
+        : '--',
+  };
+  return _localizedGaugeState(
+    context,
+    prefix: 'backup.gauge.proxy.state.',
+    state: status.proxyState,
+    params: params,
+  );
+}
+
+String? _transcriptionCaption(BuildContext context, BackupStatus status) {
+  final params = {
+    'done': status.transcriptionDone.toString(),
+    'total': status.transcriptionTotal > 0
+        ? status.transcriptionTotal.toString()
+        : '--',
+    'pending': status.transcriptionPending.toString(),
+    'processing': status.transcriptionProcessing.toString(),
+    'error': status.transcriptionError.toString(),
+  };
+  return _localizedGaugeState(
+    context,
+    prefix: 'backup.gauge.transcription.state.',
+    state: status.transcriptionState,
+    params: params,
+  );
+}
+
+String? _localizedGaugeState(
+  BuildContext context, {
+  required String prefix,
+  required String state,
+  required Map<String, String> params,
+  Iterable<String> fallbackStates = const ['idle', 'unknown'],
+}) {
+  final normalized = _normalizeState(state);
+  final candidates = <String>[normalized, ...fallbackStates];
+  for (final candidate in candidates) {
+    final key = '$prefix$candidate';
+    final value = context.tr(key, params: params);
+    if (value != key) {
+      return value;
+    }
+  }
+  return null;
+}
+
+String _normalizeState(String state) => state.trim().toLowerCase();
 
 
 class _StatusChip extends StatelessWidget {
