@@ -17,6 +17,10 @@ previews:
   video_height: 480
   video_bitrate: 1200k
   max_cache_gb: 50
+  # Use background priority to minimize CPU impact on Flutter UI
+  # true = minimal CPU usage, slower encoding
+  # false = normal CPU usage, faster encoding  
+  background_priority: true
 limits:
   min_free_gb: 10
 transcription:

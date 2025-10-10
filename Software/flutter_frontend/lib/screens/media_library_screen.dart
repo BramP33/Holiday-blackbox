@@ -337,6 +337,7 @@ class _MediaLibraryScreenState extends ConsumerState<MediaLibraryScreen> with Si
                         MaterialPageRoute(builder: (_) => VideoPlayerScreen(record: record)),
                       );
                     },
+                    onDelete: () => _showDeleteVideoDialog(context, record),
                   );
                 },
               ),
@@ -542,6 +543,69 @@ class _MediaLibraryScreenState extends ConsumerState<MediaLibraryScreen> with Si
       _isSearchExpanded = false;
     });
     _searchFocusNode.unfocus();
+  }
+
+  void _showDeleteVideoDialog(BuildContext context, VideoRecord record) {
+    showDialog<bool>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: Text(context.tr('media.library.delete.title')),
+          content: Text(
+            context.tr(
+              'media.library.delete.confirmation',
+              params: {'name': record.filename ?? record.path.split('/').last},
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: Text(context.tr('common.cancel')),
+            ),
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              style: TextButton.styleFrom(foregroundColor: AppColors.rust),
+              child: Text(context.tr('common.delete')),
+            ),
+          ],
+        );
+      },
+    ).then((confirmed) async {
+      if (confirmed != true) return;
+      
+      final api = ref.read(apiClientProvider);
+      try {
+        await api.deleteMedia(record.path);
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                context.tr(
+                  'media.library.delete.success',
+                  params: {'name': record.filename ?? record.path.split('/').last},
+                ),
+              ),
+            ),
+          );
+          // Refresh the video list
+          final request = VideoRequest(page: _videoPage, query: _videoQuery);
+          ref.invalidate(videosProvider(request));
+        }
+      } catch (error) {
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                context.tr(
+                  'media.library.delete.failed',
+                  params: {'error': error.toString()},
+                ),
+              ),
+            ),
+          );
+        }
+      }
+    });
   }
 }
 
@@ -783,11 +847,13 @@ class _VideoTimelineEntry extends StatelessWidget {
     required this.onTap,
     required this.showTopConnector,
     required this.showBottomConnector,
+    this.onDelete,
   });
 
   final VideoRecord record;
   final Uri baseUri;
   final VoidCallback onTap;
+  final VoidCallback? onDelete;
   final bool showTopConnector;
   final bool showBottomConnector;
 
@@ -910,7 +976,26 @@ class _VideoTimelineEntry extends StatelessWidget {
                   ),
                   Padding(
                     padding: EdgeInsets.only(left: spacing * 0.2),
-                    child: const Icon(Icons.open_in_new, color: AppColors.amber),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        if (onDelete != null)
+                          InkWell(
+                            onTap: onDelete,
+                            borderRadius: BorderRadius.circular(16),
+                            child: Padding(
+                              padding: const EdgeInsets.all(4),
+                              child: Icon(
+                                Icons.delete_outline,
+                                color: AppColors.rust,
+                                size: 20,
+                              ),
+                            ),
+                          ),
+                        if (onDelete != null) SizedBox(height: 8),
+                        const Icon(Icons.open_in_new, color: AppColors.amber),
+                      ],
+                    ),
                   ),
                 ],
               ),

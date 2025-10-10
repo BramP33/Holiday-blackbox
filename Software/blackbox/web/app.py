@@ -86,7 +86,95 @@ def create_app() -> Flask:
         with backup_lock:
             data = dict(backup_state)
             data['errors'] = list(backup_state.get('errors') or [])
-            return data
+
+        try:
+            previews_done = int(data.get('previews_done') or 0)
+        except (TypeError, ValueError):
+            previews_done = 0
+        try:
+            previews_total = int(data.get('previews_total') or 0)
+        except (TypeError, ValueError):
+            previews_total = 0
+        proxy_progress = (
+            max(min(previews_done / previews_total, 1.0), 0.0)
+            if previews_total > 0
+            else 0.0
+        )
+        proxy_state = 'idle'
+        if previews_total > 0:
+            proxy_state = 'done' if previews_done >= previews_total else 'running'
+        else:
+            phase = str(data.get('phase') or '').lower()
+            if phase == 'verifying':
+                proxy_state = 'running'
+            elif phase == 'error':
+                proxy_state = 'error'
+            elif phase == 'done':
+                proxy_state = 'done'
+
+        data.update({
+            'proxy_jobs_done': previews_done,
+            'proxy_jobs_total': previews_total,
+            'proxy_progress': proxy_progress,
+            'proxy_state': proxy_state,
+        })
+
+        try:
+            raw_counts = transcription_queue.state_counts()
+        except Exception:
+            raw_counts = {}
+
+        transcription_counts = {
+            (key or '').strip().lower(): int(value or 0)
+            for key, value in raw_counts.items()
+        }
+
+        def _count(*names: str) -> int:
+            return sum(transcription_counts.get(name, 0) for name in names)
+
+        transcription_pending = _count('pending', 'queued')
+        transcription_processing = _count('processing', 'running')
+        transcription_done = _count('done', 'completed')
+        transcription_error = _count('error', 'failed')
+        other_states = sum(
+            value
+            for key, value in transcription_counts.items()
+            if key not in {'pending', 'queued', 'processing', 'running', 'done', 'completed', 'error', 'failed'}
+        )
+        transcription_total = (
+            transcription_pending
+            + transcription_processing
+            + transcription_done
+            + transcription_error
+            + other_states
+        )
+        transcription_progress = (
+            max(min(transcription_done / transcription_total, 1.0), 0.0)
+            if transcription_total > 0
+            else 0.0
+        )
+        transcription_state = 'idle'
+        if transcription_processing > 0:
+            transcription_state = 'processing'
+        elif transcription_pending > 0:
+            transcription_state = 'pending'
+        elif transcription_error > 0 and transcription_done < transcription_total:
+            transcription_state = 'error'
+        elif transcription_total > 0 and transcription_done >= transcription_total:
+            transcription_state = 'done'
+
+        data.update({
+            'transcription_total': transcription_total,
+            'transcription_done': transcription_done,
+            'transcription_pending': transcription_pending,
+            'transcription_processing': transcription_processing,
+            'transcription_error': transcription_error,
+            'transcription_progress': transcription_progress,
+            'transcription_state': transcription_state,
+            'transcription_updated_at': _now_iso(),
+        })
+
+        return data
 
     def _format_srt_timestamp(seconds: float) -> str:
         total_ms = int(round(max(seconds, 0.0) * 1000))
@@ -897,6 +985,7 @@ def create_app() -> Flask:
                     height = previews_cfg.get('video_height', 480)
                     bitrate = str(previews_cfg.get('video_bitrate', '1200k'))
                     encoder = str(previews_cfg.get('video_encoder', 'auto') or 'auto')
+                    background_priority = bool(previews_cfg.get('background_priority', True))
 
                     def proxy_progress(done: int, total: int, _path: Path, _kind: str) -> None:
                         fraction = done / total if total else 1.0
@@ -917,6 +1006,7 @@ def create_app() -> Flask:
                             height=height,
                             bitrate=bitrate,
                             encoder=encoder,
+                            background_priority=background_priority,
                             progress_cb=proxy_progress,
                         )
                     except Exception as exc:
