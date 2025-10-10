@@ -216,20 +216,26 @@ class OnScreenKeyboardController {
   }
 
   void backspace() {
+    debugPrint('Backspace called');
     final EditableTextState? editable = _currentEditable;
     if (editable == null || !editable.mounted) {
+      debugPrint('Backspace: No editable or not mounted');
       return;
     }
 
+    debugPrint('Backspace: Processing...');
     _hideTimer?.cancel();
     _hideTimer = null;
     _ensureEditableFocus();
 
     final TextEditingValue currentValue = editable.textEditingValue;
     final TextSelection selection = currentValue.selection;
+    debugPrint('Backspace: Current text: "${currentValue.text}", selection: ${selection.start}-${selection.end}');
 
     if (!selection.isValid) {
+      debugPrint('Backspace: Invalid selection, removing last char');
       if (currentValue.text.isEmpty) {
+        debugPrint('Backspace: Text is empty, nothing to do');
         return;
       }
       final String newText =

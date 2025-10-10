@@ -11,7 +11,6 @@ import '../theme.dart';
 import '../widgets/compass_gauge.dart';
 import '../widgets/info_tile.dart';
 import '../widgets/journal_card.dart';
-import '../widgets/log_entry_banner.dart';
 import '../widgets/section_header.dart';
 
 class BackupScreen extends ConsumerStatefulWidget {
@@ -87,7 +86,6 @@ class _BackupBody extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final theme = Theme.of(context);
     final phase = _describePhase(context, status.phase);
     final isIndeterminate = status.phase == BackupPhase.preparing ||
         status.phase == BackupPhase.cancelling;
@@ -108,7 +106,7 @@ class _BackupBody extends ConsumerWidget {
     final previewValue = status.previewsTotal > 0
         ? '${status.previewsDone}/${status.previewsTotal}'
         : '--';
-    final missionLogMessage = status.message?.isNotEmpty == true
+    final statusMessage = status.message?.isNotEmpty == true
         ? status.message!
         : _defaultLogMessage(context, status);
 
@@ -172,7 +170,8 @@ class _BackupBody extends ConsumerWidget {
         if (context.mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text('Failed to start transcription: ${error.toString()}'),
+              content:
+                  Text('Failed to start transcription: ${error.toString()}'),
             ),
           );
         }
@@ -184,49 +183,21 @@ class _BackupBody extends ConsumerWidget {
         label: context.tr('backup.info.transfer'),
         value: manifestValue,
         icon: Icons.layers,
-        caption: context.tr('backup.info.transfer_caption'),
       ),
       InfoTile(
         label: context.tr('backup.info.data'),
         value: _formatBytes(status.bytesCopied),
         icon: Icons.sd_storage,
-        caption: context.tr('backup.info.data_caption'),
-      ),
-      InfoTile(
-        label: context.tr('backup.info.speed'),
-        value: status.speed ?? 'n/a',
-        icon: Icons.speed,
-        caption: context.tr('backup.info.speed_caption'),
       ),
       InfoTile(
         label: context.tr('backup.info.eta'),
         value: status.eta ?? '--',
         icon: Icons.hourglass_bottom,
-        caption: context.tr('backup.info.eta_caption'),
       ),
       InfoTile(
-        label: context.tr('backup.info.copied_new'),
-        value: status.copiedFiles.toString(),
-        icon: Icons.file_download_done_rounded,
-        caption: context.tr('backup.info.copied_new_caption'),
-      ),
-      InfoTile(
-        label: context.tr('backup.info.duplicates'),
-        value: status.skippedFiles.toString(),
-        icon: Icons.copy_all_rounded,
-        caption: context.tr('backup.info.duplicates_caption'),
-      ),
-      InfoTile(
-        label: context.tr('backup.info.replaced'),
-        value: status.replacedFiles.toString(),
-        icon: Icons.swap_horiz_rounded,
-        caption: context.tr('backup.info.replaced_caption'),
-      ),
-      InfoTile(
-        label: context.tr('backup.info.preview'),
-        value: previewValue,
-        icon: Icons.movie_filter_rounded,
-        caption: context.tr('backup.info.preview_caption'),
+        label: context.tr('backup.info.speed'),
+        value: status.speed ?? '--',
+        icon: Icons.speed,
       ),
     ];
     final recoveryCard = _buildRecoveryCard(
@@ -244,6 +215,56 @@ class _BackupBody extends ConsumerWidget {
       padding: EdgeInsets.fromLTRB(horizontal, vertical, horizontal, bottom),
       children: [
         SectionHeader(
+          title: context.tr('backup.section.actions'),
+          subtitle: context.tr('backup.section.actions_subtitle'),
+          iconAsset: 'assets/icons/trail/trail_marker.svg',
+        ),
+        SizedBox(height: spacing),
+        JournalCard(
+          padding: journalPadding,
+          child: Wrap(
+            spacing: spacing - 4,
+            runSpacing: spacing - 4,
+            children: [
+              FilledButton.icon(
+                onPressed: status.isActive
+                    ? null
+                    : () {
+                        triggerStart();
+                      },
+                icon: const Icon(Icons.play_arrow_rounded),
+                label: Text(context.tr('backup.actions.start')),
+              ),
+              OutlinedButton.icon(
+                onPressed: status.canCancel
+                    ? () {
+                        triggerCancel();
+                      }
+                    : null,
+                icon: const Icon(Icons.stop_circle_rounded),
+                label: Text(context.tr('backup.actions.cancel')),
+              ),
+              OutlinedButton.icon(
+                onPressed: status.isActive
+                    ? null
+                    : () {
+                        triggerStartTranscription();
+                      },
+                icon: const Icon(Icons.mic_rounded),
+                label: const Text('Start Transcriptie'),
+              ),
+              TextButton.icon(
+                onPressed: () {
+                  ref.invalidate(backupStatusProvider);
+                },
+                icon: const Icon(Icons.refresh_rounded),
+                label: Text(context.tr('backup.actions.refresh')),
+              ),
+            ],
+          ),
+        ),
+        SizedBox(height: spacing),
+        SectionHeader(
           title: context.tr('backup.section.deck_title'),
           subtitle: context.tr('backup.section.deck_subtitle'),
           iconAsset: 'assets/icons/trail/compass.svg',
@@ -252,8 +273,8 @@ class _BackupBody extends ConsumerWidget {
         SizedBox(height: spacing),
         JournalCard(
           padding: journalPadding,
-          heroBadge: _MissionBadge(
-              text: phase.label.toUpperCase(), color: phase.badgeColor),
+          heroBadge:
+              _MissionBadge(text: phase.label.toUpperCase(), color: phase.badgeColor),
           child: LayoutBuilder(
             builder: (context, constraints) {
               final available = constraints.maxWidth;
@@ -296,21 +317,13 @@ class _BackupBody extends ConsumerWidget {
               );
 
               final spacingWidget = SizedBox(height: spacing);
-
-              final currentFile = status.currentFile;
-              final detailWidgets = <Widget>[
-                if (currentFile != null && currentFile.isNotEmpty)
-                  Padding(
-                    padding: EdgeInsets.only(top: spacing),
-                    child: Text(
-                      context.tr('backup.info.current_file',
-                          params: {'file': currentFile}),
-                      style: theme.textTheme.bodyMedium?.copyWith(
-                          color: AppColors.amber, letterSpacing: 0.4),
-                    ),
-                  ),
-                ..._buildStatusDetails(context, status, phase),
-              ];
+              final detailWidgets = _buildStatusDetails(
+                context,
+                status,
+                phase,
+                statusMessage: statusMessage,
+                previewValue: previewValue,
+              );
 
               if (isTarget && available < compactThreshold) {
                 return Column(
@@ -343,102 +356,79 @@ class _BackupBody extends ConsumerWidget {
             },
           ),
         ),
-        SizedBox(height: spacing),
-        SectionHeader(
-          title: context.tr('backup.section.timeline'),
-          subtitle: context.tr('backup.section.timeline_subtitle'),
-          iconAsset: 'assets/icons/trail/trail_marker.svg',
-        ),
-        const SizedBox(height: 16),
-        _PhaseTimeline(status: status),
-        SizedBox(height: spacing),
-        SectionHeader(
-          title: context.tr('backup.section.mission_log'),
-          subtitle: context.tr('backup.section.mission_log_subtitle'),
-        ),
-        const SizedBox(height: 16),
-        LogEntryBanner(
-          title:
-              '${phase.label} // ${status.deviceLabel ?? context.tr('backup.no_source')}',
-          message: missionLogMessage,
-          timestamp: status.updatedAt,
-        ),
         if (recoveryCard != null) ...[
           SizedBox(height: spacing),
           recoveryCard,
         ],
-        SizedBox(height: spacing),
-        SectionHeader(
-          title: context.tr('backup.section.actions'),
-          subtitle: context.tr('backup.section.actions_subtitle'),
-          iconAsset: 'assets/icons/trail/trail_marker.svg',
-        ),
-        const SizedBox(height: 16),
-        Wrap(
-          spacing: spacing - 4,
-          runSpacing: spacing - 4,
-          children: [
-            FilledButton.icon(
-              onPressed: status.isActive
-                  ? null
-                  : () {
-                      triggerStart();
-                    },
-              icon: const Icon(Icons.play_arrow_rounded),
-              label: Text(context.tr('backup.actions.start')),
-            ),
-            OutlinedButton.icon(
-              onPressed: status.canCancel
-                  ? () {
-                      triggerCancel();
-                    }
-                  : null,
-              icon: const Icon(Icons.stop_circle_rounded),
-              label: Text(context.tr('backup.actions.cancel')),
-            ),
-            OutlinedButton.icon(
-              onPressed: status.isActive
-                  ? null
-                  : () {
-                      triggerStartTranscription();
-                    },
-              icon: const Icon(Icons.mic_rounded),
-              label: const Text('Start Transcriptie'),
-            ),
-            TextButton.icon(
-              onPressed: () {
-                ref.invalidate(backupStatusProvider);
-              },
-              icon: const Icon(Icons.refresh_rounded),
-              label: Text(context.tr('backup.actions.refresh')),
-            ),
-          ],
-        ),
       ],
     );
   }
 }
 
+
 List<Widget> _buildStatusDetails(
-    BuildContext context, BackupStatus status, _PhaseDescriptor phase) {
+  BuildContext context,
+  BackupStatus status,
+  _PhaseDescriptor phase, {
+  required String statusMessage,
+  required String previewValue,
+}) {
   final theme = Theme.of(context);
-  final details = <Widget>[];
+  final details = <Widget>[
+    Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: AppColors.charcoalAlt.withOpacity(0.65),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: phase.badgeColor.withOpacity(0.4), width: 1.2),
+      ),
+      child: Text(
+        statusMessage,
+        style: theme.textTheme.bodyMedium
+            ?.copyWith(color: AppColors.kraft, height: 1.4),
+      ),
+    ),
+  ];
 
-  if (status.deviceLabel != null) {
-    details.add(
-      _DeviceCallout(deviceLabel: status.deviceLabel!, phase: phase),
-    );
-  }
-
-  if (status.message != null) {
+  final currentFile = status.currentFile;
+  if (currentFile != null && currentFile.isNotEmpty) {
     details.add(
       Padding(
         padding: const EdgeInsets.only(top: 12),
         child: Text(
-          status.message!,
-          style: theme.textTheme.bodySmall
-              ?.copyWith(color: AppColors.sage, height: 1.4),
+          context.tr('backup.info.current_file', params: {'file': currentFile}),
+          style: theme.textTheme.bodyMedium
+              ?.copyWith(color: AppColors.amber, letterSpacing: 0.4),
         ),
+      ),
+    );
+  }
+
+  if (previewValue != '--') {
+    details.add(
+      Padding(
+        padding: const EdgeInsets.only(top: 8),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.movie_filter_rounded, color: AppColors.sage, size: 18),
+            const SizedBox(width: 8),
+            Text(
+              "${context.tr('backup.info.preview')}: $previewValue",
+              style: theme.textTheme.bodySmall
+                  ?.copyWith(color: AppColors.sage, height: 1.3),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  if (status.deviceLabel != null) {
+    details.add(
+      Padding(
+        padding: const EdgeInsets.only(top: 14),
+        child: _DeviceCallout(deviceLabel: status.deviceLabel!, phase: phase),
       ),
     );
   }
@@ -451,8 +441,8 @@ List<Widget> _buildStatusDetails(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(context.tr('backup.errors.heading'),
-                style: theme.textTheme.titleSmall
-                    ?.copyWith(color: AppColors.rust)),
+                style:
+                    theme.textTheme.titleSmall?.copyWith(color: AppColors.rust)),
             const SizedBox(height: 8),
             ...status.errors.map(
               (err) => Padding(
@@ -466,12 +456,9 @@ List<Widget> _buildStatusDetails(
     );
   }
 
-  if (details.isEmpty) {
-    details.add(const SizedBox.shrink());
-  }
-
   return details;
 }
+
 
 class _StatusChip extends StatelessWidget {
   const _StatusChip({required this.isActive, required this.phase});
@@ -568,147 +555,7 @@ class _DeviceCallout extends StatelessWidget {
   }
 }
 
-enum _PhasePillState { completed, active, upcoming, error }
 
-class _PhaseTimeline extends StatelessWidget {
-  const _PhaseTimeline({required this.status});
-
-  final BackupStatus status;
-
-  @override
-  Widget build(BuildContext context) {
-    final spacing = ScreenLayout.journalSpacing(context);
-    final theme = Theme.of(context);
-    const phases = [
-      BackupPhase.preparing,
-      BackupPhase.copying,
-      BackupPhase.verifying,
-      BackupPhase.done,
-    ];
-    final currentIndex = _currentPhaseIndex(status.phase);
-    final hasError = status.phase == BackupPhase.error;
-    final isCancelling = status.phase == BackupPhase.cancelling;
-
-    return JournalCard(
-      padding: ScreenLayout.journalPadding(context),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Wrap(
-            spacing: spacing,
-            runSpacing: spacing,
-            children: phases.map((phase) {
-              final index = phases.indexOf(phase);
-              final pillState =
-                  _resolvePhaseState(phase, index, currentIndex, status);
-              final descriptor = _describePhase(context, phase);
-              return _PhasePill(
-                label: descriptor.label,
-                caption: descriptor.caption,
-                icon: _phaseIcon(phase),
-                state: pillState,
-              );
-            }).toList(growable: false),
-          ),
-          if (hasError || isCancelling) ...[
-            SizedBox(height: spacing),
-            Text(
-              hasError
-                  ? context.tr('backup.phase.error_caption')
-                  : context.tr('backup.phase.cancelling_caption'),
-              style: theme.textTheme.bodySmall
-                  ?.copyWith(color: AppColors.rust, height: 1.4),
-            ),
-          ],
-        ],
-      ),
-    );
-  }
-}
-
-class _PhasePill extends StatelessWidget {
-  const _PhasePill({
-    required this.label,
-    required this.caption,
-    required this.icon,
-    required this.state,
-  });
-
-  final String label;
-  final String caption;
-  final IconData icon;
-  final _PhasePillState state;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final isTarget = ScreenLayout.isTargetSize(context);
-
-    Color border;
-    Color fill;
-    Color textColor;
-
-    switch (state) {
-      case _PhasePillState.completed:
-        border = AppColors.sage;
-        fill = AppColors.sage.withOpacity(0.18);
-        textColor = AppColors.kraft;
-        break;
-      case _PhasePillState.active:
-        border = AppColors.amber;
-        fill = AppColors.amber.withOpacity(0.2);
-        textColor = AppColors.kraft;
-        break;
-      case _PhasePillState.error:
-        border = AppColors.rust;
-        fill = AppColors.rust.withOpacity(0.2);
-        textColor = AppColors.kraft;
-        break;
-      case _PhasePillState.upcoming:
-      default:
-        border = AppColors.sage.withOpacity(0.5);
-        fill = AppColors.charcoalAlt.withOpacity(0.6);
-        textColor = AppColors.sage;
-        break;
-    }
-
-    return Container(
-      width: isTarget ? 220 : 240,
-      padding: EdgeInsets.symmetric(
-          horizontal: isTarget ? 18 : 20, vertical: isTarget ? 18 : 20),
-      decoration: BoxDecoration(
-        color: fill,
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: border, width: 1.6),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.35),
-            offset: const Offset(0, 6),
-            blurRadius: 14,
-          ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Icon(icon, color: border, size: isTarget ? 22 : 24),
-          SizedBox(height: isTarget ? 12 : 14),
-          Text(
-            label.toUpperCase(),
-            style: theme.textTheme.labelLarge
-                ?.copyWith(color: border, letterSpacing: 1.2),
-          ),
-          SizedBox(height: isTarget ? 6 : 8),
-          Text(
-            caption,
-            style: theme.textTheme.bodySmall
-                ?.copyWith(color: textColor, height: 1.35),
-          ),
-        ],
-      ),
-    );
-  }
-}
 
 Widget? _buildRecoveryCard({
   required BuildContext context,
@@ -804,61 +651,8 @@ String? _recoveryHint(BuildContext context, BackupStatus status) {
   return context.tr('backup.recovery.hint.generic');
 }
 
-int _currentPhaseIndex(BackupPhase phase) {
-  switch (phase) {
-    case BackupPhase.preparing:
-      return 0;
-    case BackupPhase.copying:
-      return 1;
-    case BackupPhase.verifying:
-    case BackupPhase.cancelling:
-    case BackupPhase.error:
-      return 2;
-    case BackupPhase.done:
-      return 3;
-    default:
-      return -1;
-  }
-}
 
-_PhasePillState _resolvePhaseState(
-  BackupPhase phase,
-  int index,
-  int currentIndex,
-  BackupStatus status,
-) {
-  if (status.phase == BackupPhase.error && phase == BackupPhase.verifying) {
-    return _PhasePillState.error;
-  }
-  if (status.phase == BackupPhase.done && phase == BackupPhase.done) {
-    return _PhasePillState.completed;
-  }
-  if (currentIndex == -1) {
-    return _PhasePillState.upcoming;
-  }
-  if (index < currentIndex) {
-    return _PhasePillState.completed;
-  }
-  if (index == currentIndex && status.phase != BackupPhase.done) {
-    return _PhasePillState.active;
-  }
-  return _PhasePillState.upcoming;
-}
 
-IconData _phaseIcon(BackupPhase phase) {
-  switch (phase) {
-    case BackupPhase.preparing:
-      return Icons.storage_rounded;
-    case BackupPhase.copying:
-      return Icons.sync_alt_rounded;
-    case BackupPhase.verifying:
-      return Icons.verified_rounded;
-    case BackupPhase.done:
-      return Icons.flag_rounded;
-    default:
-      return Icons.device_unknown;
-  }
-}
 
 class ListLoadingState extends StatelessWidget {
   const ListLoadingState({super.key});
