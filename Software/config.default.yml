@@ -23,6 +23,7 @@ previews:
   enabled: true
   video_height: 480
   video_bitrate: 1200k
+  video_encoder: auto
   max_cache_gb: 50
 
 limits:

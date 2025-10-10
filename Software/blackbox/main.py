@@ -631,6 +631,7 @@ def run_manual_backup(disp, cfg, paths, buttons: Buttons, dev_mode: bool):
             cfg['previews']['max_cache_gb'] * 1_000_000_000,
             height=cfg['previews']['video_height'],
             bitrate=str(cfg['previews']['video_bitrate']),
+            encoder=str(cfg['previews'].get('video_encoder', 'auto') or 'auto'),
             progress_cb=proxies_progress,
         )
 
@@ -765,6 +766,7 @@ def run_gopro_import(disp, cfg, paths, buttons: Buttons, dev_mode: bool):
             cfg['previews']['max_cache_gb'] * 1_000_000_000,
             height=cfg['previews']['video_height'],
             bitrate=str(cfg['previews']['video_bitrate']),
+            encoder=str(cfg['previews'].get('video_encoder', 'auto') or 'auto'),
             progress_cb=proxies_progress,
         )
 

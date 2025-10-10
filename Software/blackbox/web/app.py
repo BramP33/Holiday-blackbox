@@ -173,6 +173,7 @@ def create_app() -> Flask:
         max_cache_bytes = previews.get('max_cache_gb', 50) * 1_000_000_000
         height = previews.get('video_height', 480)
         bitrate = str(previews.get('video_bitrate', '1200k'))
+        encoder = str(previews.get('video_encoder', 'auto') or 'auto')
 
         def _run():
             with proxy_lock:
@@ -184,6 +185,7 @@ def create_app() -> Flask:
                         prefer_gopro_thm=True,
                         height=height,
                         bitrate=bitrate,
+                        encoder=encoder,
                         progress_cb=None,
                     )
                 except Exception:
@@ -894,6 +896,7 @@ def create_app() -> Flask:
                     max_cache_bytes = previews_cfg.get('max_cache_gb', 50) * 1_000_000_000
                     height = previews_cfg.get('video_height', 480)
                     bitrate = str(previews_cfg.get('video_bitrate', '1200k'))
+                    encoder = str(previews_cfg.get('video_encoder', 'auto') or 'auto')
 
                     def proxy_progress(done: int, total: int, _path: Path, _kind: str) -> None:
                         fraction = done / total if total else 1.0
@@ -913,6 +916,7 @@ def create_app() -> Flask:
                             prefer_gopro_thm=True,
                             height=height,
                             bitrate=bitrate,
+                            encoder=encoder,
                             progress_cb=proxy_progress,
                         )
                     except Exception as exc:

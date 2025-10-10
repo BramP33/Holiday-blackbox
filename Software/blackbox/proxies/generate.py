@@ -1,12 +1,13 @@
 from __future__ import annotations
 from pathlib import Path
 import subprocess
-import shutil
 import os
-from typing import Iterable, Callable, Optional
+from typing import Callable, Optional
 
 VIDEO_EXTS = {'.mp4', '.mov', '.m4v'}
 PHOTO_EXTS = {'.jpg', '.jpeg', '.png', '.heic', '.heif', '.rw2', '.cr2', '.nef', '.raf', '.dng', '.arw'}
+
+_FAILED_ENCODERS: set[str] = set()
 
 
 def _run(cmd: list[str]) -> int:
@@ -41,15 +42,61 @@ def thumb_name_for(src: Path, cache_dir: Path) -> Path:
     return cache_dir / f"{safe}.jpg"
 
 
-def build_video_proxy(src: Path, dst: Path, height: int = 480, bitrate: str = '1200k') -> int:
+def _video_proxy_cmd(src: Path, dst: Path, height: int, bitrate: str, encoder: str) -> list[str]:
+    cmd = ['ffmpeg', '-y', '-i', str(src), '-vf', f"scale=-2:{height}"]
+    if encoder == 'libx264':
+        cmd.extend(['-c:v', 'libx264', '-b:v', bitrate, '-preset', 'veryfast'])
+    else:
+        cmd.extend(['-c:v', encoder, '-b:v', bitrate, '-pix_fmt', 'yuv420p'])
+    cmd.extend(['-c:a', 'aac', '-b:a', '128k', '-ac', '2', '-movflags', '+faststart', str(dst)])
+    return cmd
+
+
+def build_video_proxy(
+    src: Path,
+    dst: Path,
+    height: int = 480,
+    bitrate: str = '1200k',
+    encoder: Optional[str] = None,
+) -> int:
     dst.parent.mkdir(parents=True, exist_ok=True)
-    cmd = [
-        'ffmpeg', '-y', '-i', str(src), '-vf', f"scale=-2:{height}",
-        '-c:v', 'libx264', '-b:v', bitrate, '-preset', 'veryfast',
-        '-c:a', 'aac', '-b:a', '128k', '-ac', '2', '-movflags', '+faststart',
-        str(dst)
-    ]
-    return _run(cmd)
+    preferred: list[str] = []
+
+    if encoder is not None:
+        raw = encoder.strip()
+        normalized = raw.lower()
+        if not raw or normalized == 'auto':
+            candidate = 'h264_v4l2m2m'
+        elif normalized in {'cpu', 'software', 'none', 'disabled', 'off'}:
+            candidate = 'libx264'
+        else:
+            candidate = raw
+        preferred.append(candidate)
+    else:
+        preferred.append('h264_v4l2m2m')
+
+    preferred.append('libx264')
+
+    exit_code = 1
+    seen: set[str] = set()
+    for current in preferred:
+        if current in seen:
+            continue
+        seen.add(current)
+        if current != 'libx264' and current in _FAILED_ENCODERS:
+            continue
+        cmd = _video_proxy_cmd(src, dst, height, bitrate, current)
+        exit_code = _run(cmd)
+        if exit_code == 0:
+            return 0
+        if current != 'libx264':
+            _FAILED_ENCODERS.add(current)
+            try:
+                dst.unlink()
+            except OSError:
+                pass
+
+    return exit_code
 
 
 def build_video_thumb(src: Path, dst: Path, size: int = 720) -> int:
@@ -81,6 +128,7 @@ def generate_for_folder(
     prefer_gopro_thm: bool = True,
     height: int = 480,
     bitrate: str = '1200k',
+    encoder: Optional[str] = None,
     progress_cb: Optional[Callable[[int, int, Path, str], None]] = None,
 ) -> None:
     """Generate proxies/thumbs for media under folder.
@@ -119,7 +167,7 @@ def generate_for_folder(
     # Execute tasks
     for kind, src, dst in tasks:
         if kind == 'video':
-            build_video_proxy(src, dst, height=height, bitrate=bitrate)
+            build_video_proxy(src, dst, height=height, bitrate=bitrate, encoder=encoder)
         elif kind == 'photo':
             build_photo_thumb(src, dst)
         else:

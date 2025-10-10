@@ -92,6 +92,7 @@ Set `BLACKBOX_PARTIAL=1` if you want to exercise partial refresh support with re
   - `trips/<TripName>/photos/` — all photos in one folder.
   - `trips/<TripName>/<YYYY-MM-DD>/<device>/` — videos grouped by capture date and detected device (gopro, drone, 360, lumix_g7, camera, etc.).
   - `proxies/` — capped by `previews.max_cache_gb`; contains 480p H.264 proxies and JPEG thumbnails.
+- Proxy encoding uses FFmpeg; set `previews.video_encoder` to `auto` to try hardware encoders (falls back to `libx264`), or override it with any available FFmpeg encoder name.
 - Device labels are configurable via `device_labels` and appear in both the UI and folder names.
 - Backup stops early if free space would drop below `limits.min_free_gb`.
 
