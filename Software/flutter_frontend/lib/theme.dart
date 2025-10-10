@@ -1,4 +1,15 @@
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+
+// Mobile-style scroll behavior for touch screens
+class TouchScrollBehavior extends MaterialScrollBehavior {
+  @override
+  Set<PointerDeviceKind> get dragDevices => {
+    PointerDeviceKind.touch,
+    PointerDeviceKind.mouse,
+    PointerDeviceKind.stylus,
+  };
+}
 
 class AppColors {
   static const Color forest = Color(0xFF144834); // deep green with 6-bit friendly channel values
@@ -277,6 +288,13 @@ class AppTheme {
           side: BorderSide(color: AppColors.sage.withOpacity(0.4), width: 1),
         ),
         contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+      ),
+      // Mobile-style scrolling configuration for 4" touchscreen
+      scrollbarTheme: const ScrollbarThemeData(
+        thumbVisibility: MaterialStatePropertyAll(false), // Hide scrollbars
+        trackVisibility: MaterialStatePropertyAll(false),
+        interactive: false,
+        thickness: MaterialStatePropertyAll(0), // Make scrollbars invisible
       ),
     );
   }

@@ -59,13 +59,28 @@ class _WifiSettingsScreenState extends ConsumerState<WifiSettingsScreen> {
       }
     });
     
-    // Get initial networks
+    // Get initial networks and AP status
     if (_wifiService.cachedNetworks.isNotEmpty) {
       setState(() {
         _networks = _wifiService.cachedNetworks;
         _currentNetwork = _wifiService.currentNetwork;
         _wifiEnabled = _currentNetwork != null;
       });
+    }
+
+    // Get initial AP status
+    try {
+      final apStatus = await _wifiService.getAccessPointStatus();
+      if (mounted) {
+        setState(() {
+          _apEnabled = apStatus['active'] ?? false;
+          if (_apEnabled) {
+            _wifiEnabled = false; // AP mode disables WiFi
+          }
+        });
+      }
+    } catch (e) {
+      // AP status check failed, keep default false
     }
   }
 
@@ -173,7 +188,7 @@ class _WifiSettingsScreenState extends ConsumerState<WifiSettingsScreen> {
     });
   }
 
-  void _handleApToggle(bool value) {
+  void _handleApToggle(bool value) async {
     setState(() {
       _apEnabled = value;
       if (value) {
@@ -182,6 +197,47 @@ class _WifiSettingsScreenState extends ConsumerState<WifiSettingsScreen> {
         _wifiService.stopPeriodicScanning();
       }
     });
+
+    try {
+      if (value) {
+        // Start Access Point mode
+        final success = await _wifiService.startAccessPoint();
+        if (!success) {
+          if (mounted) {
+            _showSnack('Failed to start Access Point');
+            setState(() {
+              _apEnabled = false;
+            });
+          }
+        } else {
+          if (mounted) {
+            _showSnack('Access Point started successfully');
+          }
+        }
+      } else {
+        // Stop Access Point mode
+        final success = await _wifiService.stopAccessPoint();
+        if (!success) {
+          if (mounted) {
+            _showSnack('Failed to stop Access Point');
+            setState(() {
+              _apEnabled = true;
+            });
+          }
+        } else {
+          if (mounted) {
+            _showSnack('Access Point stopped successfully');
+          }
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        _showSnack('Error toggling Access Point: $e');
+        setState(() {
+          _apEnabled = !value;
+        });
+      }
+    }
   }
 
   Future<void> _startScan() async {

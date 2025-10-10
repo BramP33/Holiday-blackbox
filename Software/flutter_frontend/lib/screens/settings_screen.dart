@@ -2,10 +2,8 @@ import 'package:flutter/material.dart';
 
 import 'advanced_settings_screen.dart';
 import 'bluetooth_settings_screen.dart';
-import 'bluetooth_debug_screen.dart';
 import 'trip_settings_screen.dart';
 import 'wifi_settings_screen.dart';
-import 'wifi_debug_screen.dart';
 
 class SettingsScreen extends StatelessWidget {
   const SettingsScreen({super.key});
@@ -48,24 +46,6 @@ class SettingsScreen extends StatelessWidget {
           subtitle: 'Access detailed configuration options.',
           onTap: () => Navigator.of(context).push(
             MaterialPageRoute(builder: (_) => const AdvancedSettingsScreen()),
-          ),
-        ),
-        const SizedBox(height: 12),
-        _SettingsNavButton(
-          icon: Icons.bug_report,
-          title: 'WiFi Debug',
-          subtitle: 'Debug WiFi connectivity and scan for networks.',
-          onTap: () => Navigator.of(context).push(
-            MaterialPageRoute(builder: (_) => const WiFiDebugScreen()),
-          ),
-        ),
-        const SizedBox(height: 12),
-        _SettingsNavButton(
-          icon: Icons.bluetooth_searching,
-          title: 'Bluetooth Debug',
-          subtitle: 'Debug Bluetooth connectivity and device pairing.',
-          onTap: () => Navigator.of(context).push(
-            MaterialPageRoute(builder: (_) => const BluetoothDebugScreen()),
           ),
         ),
       ],

@@ -5,8 +5,6 @@ import 'dart:io';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:http/http.dart' as http;
 
-import 'api_client.dart';
-
 // Enable debug logging
 const bool _kDebugWiFi = true;
 
@@ -439,11 +437,18 @@ class WiFiService {
   }
 
   // Access Point functionality
+  String get _baseUrl {
+    return const String.fromEnvironment(
+      'BLACKBOX_BASE_URL',
+      defaultValue: 'http://127.0.0.1:8080',
+    );
+  }
+
   Future<Map<String, dynamic>> getApStatus() async {
     _debugLog('Getting AP status...');
     try {
       final response = await http.get(
-        Uri.parse('${apiClient.baseUrl}/api/ap/status'),
+        Uri.parse('$_baseUrl/api/ap/status'),
         headers: {'Accept': 'application/json'},
       );
 
@@ -464,7 +469,7 @@ class WiFiService {
     _debugLog('Starting Access Point...');
     try {
       final response = await http.post(
-        Uri.parse('${apiClient.baseUrl}/api/ap/start'),
+        Uri.parse('$_baseUrl/api/ap/start'),
         headers: {'Accept': 'application/json'},
       );
 
@@ -490,7 +495,7 @@ class WiFiService {
     _debugLog('Stopping Access Point...');
     try {
       final response = await http.post(
-        Uri.parse('${apiClient.baseUrl}/api/ap/stop'),
+        Uri.parse('$_baseUrl/api/ap/stop'),
         headers: {'Accept': 'application/json'},
       );
 
@@ -506,6 +511,31 @@ class WiFiService {
       }
     } catch (e) {
       _debugLog('Error stopping Access Point: $e');
+      rethrow;
+    }
+  }
+
+  /// Get Access Point status
+  Future<Map<String, dynamic>> getAccessPointStatus() async {
+    try {
+      _debugLog('Getting Access Point status...');
+      
+      final response = await http.get(
+        Uri.parse('$_baseUrl/api/ap/status'),
+        headers: {'Accept': 'application/json'},
+      );
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body) as Map<String, dynamic>;
+        _debugLog('AP status retrieved successfully: ${data['active']}');
+        return data;
+      } else {
+        final error = 'Failed to get AP status: ${response.statusCode}';
+        _debugLog(error);
+        throw Exception(error);
+      }
+    } catch (e) {
+      _debugLog('Error getting Access Point status: $e');
       rethrow;
     }
   }

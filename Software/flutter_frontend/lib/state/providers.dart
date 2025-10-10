@@ -99,10 +99,7 @@ final localeProvider = StateNotifierProvider<LocaleController, Locale>((ref) {
 
 final onScreenKeyboardControllerProvider =
     Provider<OnScreenKeyboardController>((ref) {
-  final controller = OnScreenKeyboardController(
-    program: 'matchbox-keyboard',
-    fallbackPrograms: const ['onboard', 'florence'],
-  );
+  final controller = OnScreenKeyboardController();
   ref.onDispose(controller.dispose);
   return controller;
 });

@@ -8,6 +8,8 @@ import 'package:url_launcher/url_launcher.dart';
 import '../state/app_environment.dart';
 import '../state/providers.dart';
 import '../widgets/section_header.dart';
+import 'bluetooth_debug_screen.dart';
+import 'wifi_debug_screen.dart';
 
 class AdvancedSettingsScreen extends ConsumerStatefulWidget {
   const AdvancedSettingsScreen({super.key});
@@ -98,6 +100,10 @@ class _AdvancedSettingsScreenState extends ConsumerState<AdvancedSettingsScreen>
                 SectionHeader(title: 'Hardware'),
                 const SizedBox(height: 12),
                 _buildHardwareSection(context),
+                const SizedBox(height: 24),
+                SectionHeader(title: 'Debug Tools'),
+                const SizedBox(height: 12),
+                _buildDebugSection(context),
                 const SizedBox(height: 24),
               ],
             ),
@@ -694,6 +700,36 @@ class _AdvancedSettingsScreenState extends ConsumerState<AdvancedSettingsScreen>
             path: const ['hardware', 'buttons'],
             label: 'Button pins',
             helperText: 'Comma or space separated BCM numbers (top to bottom)',
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildDebugSection(BuildContext context) {
+    return _sectionCard(
+      context,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          ListTile(
+            leading: const Icon(Icons.bug_report),
+            title: const Text('WiFi Debug'),
+            subtitle: const Text('Debug WiFi connectivity and scan for networks'),
+            trailing: const Icon(Icons.arrow_forward_ios, size: 16),
+            onTap: () => Navigator.of(context).push(
+              MaterialPageRoute(builder: (_) => const WiFiDebugScreen()),
+            ),
+          ),
+          const Divider(),
+          ListTile(
+            leading: const Icon(Icons.bluetooth_searching),
+            title: const Text('Bluetooth Debug'),
+            subtitle: const Text('Debug Bluetooth connectivity and device pairing'),
+            trailing: const Icon(Icons.arrow_forward_ios, size: 16),
+            onTap: () => Navigator.of(context).push(
+              MaterialPageRoute(builder: (_) => const BluetoothDebugScreen()),
+            ),
           ),
         ],
       ),
