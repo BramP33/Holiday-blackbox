@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:collection/collection.dart';
 import 'package:flutter/material.dart';
@@ -104,6 +105,10 @@ class _AdvancedSettingsScreenState extends ConsumerState<AdvancedSettingsScreen>
                 SectionHeader(title: 'Debug Tools'),
                 const SizedBox(height: 12),
                 _buildDebugSection(context),
+                const SizedBox(height: 24),
+                SectionHeader(title: 'Application Control'),
+                const SizedBox(height: 12),
+                _buildApplicationControlSection(context),
                 const SizedBox(height: 24),
               ],
             ),
@@ -426,6 +431,21 @@ class _AdvancedSettingsScreenState extends ConsumerState<AdvancedSettingsScreen>
                     label: 'Model',
                   ),
                   const SizedBox(height: 12),
+                  _buildDropdown(
+                    context,
+                    path: const ['transcription', 'whisper', 'language'],
+                    label: 'Language',
+                    items: const [
+                      DropdownMenuItem(value: 'auto', child: Text('Auto-detect')),
+                      DropdownMenuItem(value: 'nl', child: Text('Nederlands')),
+                      DropdownMenuItem(value: 'en', child: Text('English')),
+                      DropdownMenuItem(value: 'de', child: Text('Deutsch')),
+                      DropdownMenuItem(value: 'fr', child: Text('Français')),
+                      DropdownMenuItem(value: 'es', child: Text('Español')),
+                      DropdownMenuItem(value: 'it', child: Text('Italiano')),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
                   Row(
                     children: [
                       Expanded(
@@ -736,6 +756,31 @@ class _AdvancedSettingsScreenState extends ConsumerState<AdvancedSettingsScreen>
     );
   }
 
+  Widget _buildApplicationControlSection(BuildContext context) {
+    return _sectionCard(
+      context,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          ListTile(
+            leading: Icon(Icons.desktop_windows, color: Theme.of(context).colorScheme.error),
+            title: const Text('Back to Desktop'),
+            subtitle: const Text('Close the application and return to desktop'),
+            trailing: FilledButton.icon(
+              onPressed: () => _handleBackToDesktop(context),
+              icon: const Icon(Icons.close),
+              label: const Text('Exit'),
+              style: FilledButton.styleFrom(
+                backgroundColor: Theme.of(context).colorScheme.error,
+                foregroundColor: Theme.of(context).colorScheme.onError,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildTextField(
     BuildContext context, {
     required List<String> path,
@@ -883,6 +928,37 @@ class _AdvancedSettingsScreenState extends ConsumerState<AdvancedSettingsScreen>
         _saving = false;
       });
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Failed to save settings: $error')));
+    }
+  }
+
+  Future<void> _handleBackToDesktop(BuildContext context) async {
+    final shouldExit = await showDialog<bool>(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: const Text('Exit Application'),
+          content: const Text('Are you sure you want to close the application and return to desktop?'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              style: FilledButton.styleFrom(
+                backgroundColor: Theme.of(context).colorScheme.error,
+                foregroundColor: Theme.of(context).colorScheme.onError,
+              ),
+              child: const Text('Exit'),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (shouldExit == true) {
+      // Close the application
+      exit(0);
     }
   }
 

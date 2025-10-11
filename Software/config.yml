@@ -1,4 +1,4 @@
-language: en
+language: nl
 trip:
   name: My Trip
   begin_date: 2025-01-01
@@ -24,8 +24,23 @@ previews:
 limits:
   min_free_gb: 10
 transcription:
+  enabled: true
+  start_time: "22:00"
+  end_time: "07:00"
+  poll_seconds: 60
   whisper:
     model: small
+    language: nl  # Dutch language support
+    compute_type: int8
+    device: cpu
+    beam_size: 5
+    temperature: 0.0
+    vad_filter: false
+  keywords:
+    method: frequency
+    top_k: 12
+  semantic:
+    enabled: true
 network:
   mode: ap
 web:

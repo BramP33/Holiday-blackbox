@@ -39,7 +39,8 @@ transcription:
   end_time: "07:00"
   poll_seconds: 60
   whisper:
-    model: tiny.en
+    model: small  # Changed from tiny.en to small for multilingual support
+    language: nl  # Added Dutch language support
     compute_type: int8
     device: cpu
     beam_size: 5
