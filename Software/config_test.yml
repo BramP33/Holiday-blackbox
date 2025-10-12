@@ -1,0 +1,59 @@
+language: en
+trip:
+  name: My Trip
+  begin_date: 2025-01-01
+  end_date: 2025-12-31
+  places: []
+verify:
+  default_mode: fast
+power_off_screen: trip
+ap:
+  ssid: Blackbox
+  password: vakantie
+  channel: auto
+  region: US
+previews:
+  enabled: true
+  video_height: 480
+  video_bitrate: 1200k
+  max_cache_gb: 50
+  # Use background priority to minimize CPU impact on Flutter UI
+  # true = minimal CPU usage, slower encoding
+  # false = normal CPU usage, faster encoding  
+  background_priority: true
+limits:
+  min_free_gb: 10
+transcription:
+  whisper:
+    model: small
+network:
+  mode: ap
+web:
+  host: 0.0.0.0
+  port: 8080
+  page_size: 50
+upload:
+  upload_device_label: Uploads
+  upload_max_mb: 8192
+paths:
+  nvme_mount: /tmp/blackbox_test  # Use writable test directory
+  source_roots:
+  - /media
+  - /run/media
+  - /mnt
+  - /Volumes
+  proxies_subdir: proxies
+device_labels:
+  - GoPro
+  - iPhone
+  - DSLR
+  - Drone
+  - Uploads
+ui:
+  hide_advanced_features: false
+hardware:
+  enable_poweroff: false
+  gpio_pins:
+    status_led: 18
+    backup_button: 24
+    power_button: 23

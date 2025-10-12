@@ -120,7 +120,7 @@
   "backup.gauge.transcription.state.pending": "{pending} clips in wachtrij",
   "backup.gauge.transcription.state.processing": "Audio verwerken {done}/{total}",
   "backup.gauge.transcription.state.done": "Alle transcripties klaar",
-  "backup.gauge.transcription.state.error": "Transcripties vereisen aandacht",
+  "backup.gauge.transcription.state.error": "Transcriptie problemen",
   "backup.gauge.transcription.state.unknown": "Transcriptiestatus onbekend",
   "backup.errors.heading": "Geregistreerde fouten",
   "backup.recovery.title": "Herstelstappen",

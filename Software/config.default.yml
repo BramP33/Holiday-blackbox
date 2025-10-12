@@ -35,8 +35,8 @@ limits:
 
 transcription:
   enabled: true
-  start_time: "22:00"
-  end_time: "07:00"
+  start_time: null  # Allow transcription anytime  
+  end_time: null    # Allow transcription anytime
   poll_seconds: 60
   whisper:
     model: small  # Changed from tiny.en to small for multilingual support

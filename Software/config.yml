@@ -25,22 +25,22 @@ limits:
   min_free_gb: 10
 transcription:
   enabled: true
-  start_time: "22:00"
-  end_time: "07:00"
-  poll_seconds: 60
+  start_time: null  # Allow transcription anytime
+  end_time: null    # Allow transcription anytime
+  poll_seconds: 120  # Check less frequently to reduce CPU usage
   whisper:
-    model: small
+    model: tiny  # Use smaller model to reduce memory usage
     language: nl  # Dutch language support
     compute_type: int8
     device: cpu
-    beam_size: 5
+    beam_size: 3  # Reduce beam size for faster processing
     temperature: 0.0
-    vad_filter: false
+    vad_filter: true  # Enable VAD to reduce processing time
   keywords:
     method: frequency
-    top_k: 12
+    top_k: 8  # Reduce keyword count
   semantic:
-    enabled: true
+    enabled: false  # Disable semantic search to save resources
 network:
   mode: ap
 web:

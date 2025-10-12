@@ -100,7 +100,7 @@ class TranscriptionWorker:
         whisper_cfg = dict(settings.get('whisper') or {})
         keywords_cfg = dict(settings.get('keywords') or {})
         semantic_cfg = dict(settings.get('semantic') or {})
-        self._start_time = _parse_time(settings.get('start_time') or settings.get('window_start') or '22:00')
+        self._start_time = _parse_time(settings.get('start_time') or settings.get('window_start'))
         end_value = settings.get('end_time') or settings.get('window_end')
         self._end_time = _parse_time(end_value) if end_value else None
         self._poll_seconds = float(settings.get('poll_seconds', 60.0))

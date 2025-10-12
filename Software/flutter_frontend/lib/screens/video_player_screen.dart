@@ -22,6 +22,7 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> {
   late VideoPlayerController _controller;
 
   Timer? _positionTimer;
+  Timer? _transcriptCheckTimer;
   bool _initializing = true;
   bool _isPlaying = false;
   Duration _position = Duration.zero;
@@ -60,9 +61,8 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> {
       // Add listeners
       _controller.addListener(_onVideoPlayerUpdate);
 
-      final subtitlesFuture = widget.record.transcriptAvailable
-          ? _loadSubtitleEntries()
-          : Future<_SubtitleLoadResult>.value(const _SubtitleLoadResult(entries: []));
+      // Always try to load subtitles - transcription might be available even if not marked in database
+      final subtitlesFuture = _loadSubtitleEntries();
 
       // Initialize player
       await _controller.initialize();
@@ -72,6 +72,11 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> {
 
       // Start position timer
       _startPositionTimer();
+
+      // Start transcript check timer if no subtitles are loaded yet
+      if (_subtitleEntries.isEmpty) {
+        _startTranscriptCheckTimer();
+      }
 
       final subtitleResult = await subtitlesFuture;
       if (!mounted) return;
@@ -153,9 +158,34 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> {
 
   Duration get _effectiveSliderPosition => _scrubOverride ?? _position;
 
+  void _startTranscriptCheckTimer() {
+    _transcriptCheckTimer = Timer.periodic(const Duration(seconds: 10), (timer) async {
+      if (!mounted) {
+        timer.cancel();
+        return;
+      }
+      
+      // Only check if we don't have subtitles yet
+      if (_subtitleEntries.isEmpty) {
+        final result = await _loadSubtitleEntries();
+        if (mounted && result.entries.isNotEmpty) {
+          setState(() {
+            _subtitleEntries = result.entries;
+            _subtitleError = result.error;
+          });
+          _updateSubtitleForPosition(_position);
+          timer.cancel(); // Stop checking once we have subtitles
+        }
+      } else {
+        timer.cancel(); // Stop checking if we already have subtitles
+      }
+    });
+  }
+
   @override
   void dispose() {
     _positionTimer?.cancel();
+    _transcriptCheckTimer?.cancel();
     _controller.removeListener(_onVideoPlayerUpdate);
     _controller.dispose();
     super.dispose();
@@ -166,15 +196,16 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> {
       final api = ref.read(apiClientProvider);
       final response = await api.fetchVideoTranscript(widget.record.path);
       if (response == null || response.trim().isEmpty) {
-        return const _SubtitleLoadResult(entries: [], error: 'Transcript not available');
+        return const _SubtitleLoadResult(entries: []);
       }
       final entries = _parseSrt(response);
       if (entries.isEmpty) {
-        return const _SubtitleLoadResult(entries: [], error: 'Transcript not available');
+        return const _SubtitleLoadResult(entries: []);
       }
       return _SubtitleLoadResult(entries: entries, error: null);
     } catch (error) {
-      return _SubtitleLoadResult(entries: const [], error: error.toString());
+      // Silent fail for missing transcripts - don't show error if transcript just doesn't exist
+      return const _SubtitleLoadResult(entries: []);
     }
   }
 
@@ -360,14 +391,27 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> {
         bottom: false,
         child: Column(
           children: [
-            AspectRatio(
-              aspectRatio: _currentAspectRatio,
-              child: _buildPlayerBody(isCompact),
+            Expanded(
+              flex: 2,
+              child: _buildVideoContainer(isCompact),
             ),
             Expanded(
               child: _buildMetadataSection(context, isCompact),
             ),
           ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildVideoContainer(bool isCompact) {
+    return Container(
+      width: double.infinity,
+      color: Colors.black,
+      child: Center(
+        child: AspectRatio(
+          aspectRatio: _currentAspectRatio,
+          child: _buildPlayerBody(isCompact),
         ),
       ),
     );
@@ -656,13 +700,18 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> {
           if (widget.record.duration != null)
             _InfoRow(label: 'Duration', value: _formatDuration(widget.record.duration!)),
           if (widget.record.transcriptState != null)
-            _InfoRow(label: 'Transcript', value: widget.record.transcriptState!),
+            _InfoRow(label: 'Transcript Status', value: widget.record.transcriptState!),
           if (_subtitleEntries.isNotEmpty)
-            const _InfoRow(label: 'Subtitles', value: 'Automatic (SRT)'),
+            const _InfoRow(label: 'Subtitles', value: 'Available (SRT)'),
           if (_subtitleEntries.isEmpty && widget.record.transcriptAvailable)
             _InfoRow(
               label: 'Subtitles',
-              value: _subtitleError ?? 'Preparing…',
+              value: _subtitleError ?? 'Loading…',
+            ),
+          if (_subtitleEntries.isEmpty && !widget.record.transcriptAvailable)
+            const _InfoRow(
+              label: 'Subtitles',
+              value: 'Checking for transcription…',
             ),
           const SizedBox(height: 16),
           Text(
