@@ -27,10 +27,13 @@ class VideoRecord {
     required this.folder,
     required this.capturedAtDisplay,
     required this.locationLabel,
+    required this.countryCode,
     required this.durationSeconds,
     required this.hasGps,
     required this.transcriptAvailable,
     required this.transcriptState,
+    this.sizeBytes,
+    this.sizeDisplay,
   });
 
   final String path;
@@ -38,10 +41,13 @@ class VideoRecord {
   final String? folder;
   final String? capturedAtDisplay;
   final String? locationLabel;
+  final String? countryCode;
   final double? durationSeconds;
   final bool hasGps;
   final bool transcriptAvailable;
   final String? transcriptState;
+  final int? sizeBytes;
+  final String? sizeDisplay;
 
   Duration? get duration {
     final value = durationSeconds;
@@ -58,10 +64,13 @@ class VideoRecord {
       folder: json['folder']?.toString(),
       capturedAtDisplay: json['captured_at_display']?.toString(),
       locationLabel: json['location_label']?.toString(),
+      countryCode: json['country_code']?.toString(),
       durationSeconds: (json['duration_sec'] as num?)?.toDouble(),
       hasGps: json['has_gps'] as bool? ?? false,
       transcriptAvailable: json['transcript_available'] as bool? ?? false,
       transcriptState: json['transcript_state']?.toString(),
+      sizeBytes: (json['size_bytes'] as num?)?.toInt(),
+      sizeDisplay: json['size_display']?.toString(),
     );
   }
 

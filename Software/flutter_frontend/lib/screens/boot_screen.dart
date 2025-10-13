@@ -17,7 +17,8 @@ class BootScreen extends ConsumerStatefulWidget {
   ConsumerState<BootScreen> createState() => _BootScreenState();
 }
 
-class _BootScreenState extends ConsumerState<BootScreen> with TickerProviderStateMixin {
+class _BootScreenState extends ConsumerState<BootScreen>
+    with TickerProviderStateMixin {
   late final AnimationController _zoomController;
   late final AnimationController _markerController;
   bool _scheduledNav = false;
@@ -27,9 +28,11 @@ class _BootScreenState extends ConsumerState<BootScreen> with TickerProviderStat
   @override
   void initState() {
     super.initState();
-    _zoomController = AnimationController(vsync: this, duration: const Duration(milliseconds: 2200))
+    _zoomController = AnimationController(
+        vsync: this, duration: const Duration(milliseconds: 2200))
       ..forward();
-    _markerController = AnimationController(vsync: this, duration: const Duration(milliseconds: 1200));
+    _markerController = AnimationController(
+        vsync: this, duration: const Duration(milliseconds: 1200));
 
     _zoomController.addStatusListener((status) {
       if (status == AnimationStatus.completed) {
@@ -62,7 +65,8 @@ class _BootScreenState extends ConsumerState<BootScreen> with TickerProviderStat
     final hasError = locationAsync.hasError;
     final bool dataResolved = locationAsync.asData != null || hasError;
 
-    if ((hasError || (dataResolved && location == null)) && _fallbackCity == null) {
+    if ((hasError || (dataResolved && location == null)) &&
+        _fallbackCity == null) {
       _fallbackCity = _fallbackCities[_random.nextInt(_fallbackCities.length)];
     }
 
@@ -96,21 +100,37 @@ class _BootScreenState extends ConsumerState<BootScreen> with TickerProviderStat
       body: AnimatedBuilder(
         animation: Listenable.merge([_zoomController, _markerController]),
         builder: (context, child) {
-          final zoomProgress = Curves.easeInOutCubic.transform(_zoomController.value.clamp(0.0, 1.0));
+          final zoomProgress = Curves.easeInOutCubic
+              .transform(_zoomController.value.clamp(0.0, 1.0));
           final scale = lerpDouble(1.0, 2.35, zoomProgress) ?? 1.0;
-          final mapOpacity = Curves.easeInOutQuad.transform(_zoomController.value.clamp(0.0, 1.0));
-          final spotlightOpacity = Curves.easeOut.transform(_markerController.value.clamp(0.0, 1.0));
-          final markerScale = lerpDouble(0.4, 1.0, Curves.elasticOut.transform(_markerController.value.clamp(0.0, 1.0))) ?? 1.0;
+          final mapOpacity = Curves.easeInOutQuad
+              .transform(_zoomController.value.clamp(0.0, 1.0));
+          final spotlightOpacity =
+              Curves.easeOut.transform(_markerController.value.clamp(0.0, 1.0));
+          final markerScale = lerpDouble(
+                  0.4,
+                  1.0,
+                  Curves.elasticOut
+                      .transform(_markerController.value.clamp(0.0, 1.0))) ??
+              1.0;
 
-          final mapAlignment = Alignment.lerp(Alignment.center, Alignment(-alignment.x, -alignment.y), zoomProgress) ?? Alignment.center;
-          final markerAlignment = Alignment.lerp(Alignment.center, alignment, zoomProgress) ?? alignment;
+          final mapAlignment = Alignment.lerp(Alignment.center,
+                  Alignment(-alignment.x, -alignment.y), zoomProgress) ??
+              Alignment.center;
+          final markerAlignment =
+              Alignment.lerp(Alignment.center, alignment, zoomProgress) ??
+                  alignment;
 
           return Container(
             decoration: const BoxDecoration(
               gradient: LinearGradient(
                 begin: Alignment.topLeft,
                 end: Alignment.bottomRight,
-                colors: [Color(0xFF051C2C), Color(0xFF0F4F4F), Color(0xFF123A35)],
+                colors: [
+                  Color(0xFF051C2C),
+                  Color(0xFF0F4F4F),
+                  Color(0xFF123A35)
+                ],
               ),
             ),
             child: Stack(
@@ -124,7 +144,8 @@ class _BootScreenState extends ConsumerState<BootScreen> with TickerProviderStat
                       scale: scale,
                       child: SvgPicture.asset(
                         'assets/visuals/world_map.svg',
-                        colorFilter: const ColorFilter.mode(Color(0x33FFFFFF), BlendMode.srcIn),
+                        colorFilter: const ColorFilter.mode(
+                            Color(0x33FFFFFF), BlendMode.srcIn),
                       ),
                     ),
                   ),
@@ -140,7 +161,8 @@ class _BootScreenState extends ConsumerState<BootScreen> with TickerProviderStat
                   ),
                 ),
                 Align(
-                  alignment: Alignment(markerAlignment.x * 0.92, markerAlignment.y * 0.92),
+                  alignment: Alignment(
+                      markerAlignment.x * 0.92, markerAlignment.y * 0.92),
                   child: Opacity(
                     opacity: spotlightOpacity,
                     child: Transform.scale(
@@ -149,48 +171,24 @@ class _BootScreenState extends ConsumerState<BootScreen> with TickerProviderStat
                         'assets/branding/blackbox_logo.svg',
                         width: 96,
                         height: 96,
-                        colorFilter: const ColorFilter.mode(Colors.white, BlendMode.srcIn),
+                        colorFilter: const ColorFilter.mode(
+                            Colors.white, BlendMode.srcIn),
                       ),
                     ),
                   ),
                 ),
-                Positioned(
-                  left: 32,
-                  right: 32,
-                  bottom: 64,
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Blackbox is powering up…',
-                        style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold),
+                Align(
+                  alignment: Alignment.bottomCenter,
+                  child: SafeArea(
+                    minimum: const EdgeInsets.fromLTRB(24, 0, 24, 32),
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 460),
+                      child: _BootStatusPanel(
+                        headline: 'Blackbox is powering up…',
+                        label: label,
+                        details: locationDetails,
                       ),
-                      const SizedBox(height: 8),
-                      Row(
-                        children: [
-                          const SizedBox(
-                            width: 20,
-                            height: 20,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: Text(
-                              label,
-                              style: Theme.of(context).textTheme.bodyLarge,
-                            ),
-                          ),
-                        ],
-                      ),
-                      if (locationDetails != null) ...[
-                        const SizedBox(height: 8),
-                        Text(
-                          locationDetails,
-                          style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Colors.white70),
-                        ),
-                      ],
-                    ],
+                    ),
                   ),
                 ),
               ],
@@ -248,13 +246,98 @@ class _SpotlightMarker extends StatelessWidget {
               height: 48,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
-                border: Border.all(color: Colors.white.withOpacity(0.9), width: 3),
+                border:
+                    Border.all(color: Colors.white.withOpacity(0.9), width: 3),
                 boxShadow: const [
-                  BoxShadow(color: Color(0xAAFFFFFF), blurRadius: 20, spreadRadius: 6),
+                  BoxShadow(
+                      color: Color(0xAAFFFFFF),
+                      blurRadius: 20,
+                      spreadRadius: 6),
                 ],
               ),
             ),
         ],
+      ),
+    );
+  }
+}
+
+class _BootStatusPanel extends StatelessWidget {
+  const _BootStatusPanel({
+    required this.headline,
+    required this.label,
+    this.details,
+  });
+
+  final String headline;
+  final String label;
+  final String? details;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: const Color(0xAA031A24),
+        borderRadius: BorderRadius.circular(28),
+        border: Border.all(color: Colors.white.withOpacity(0.12)),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x33000000),
+            blurRadius: 20,
+            offset: Offset(0, 12),
+          ),
+        ],
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            Text(
+              headline,
+              textAlign: TextAlign.center,
+              style: theme.textTheme.headlineSmall?.copyWith(
+                fontWeight: FontWeight.w700,
+                color: Colors.white,
+              ),
+            ),
+            const SizedBox(height: 16),
+            SizedBox(
+              width: double.infinity,
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      label,
+                      textAlign: TextAlign.center,
+                      style: theme.textTheme.bodyLarge
+                          ?.copyWith(color: Colors.white),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            if (details != null) ...[
+              const SizedBox(height: 12),
+              Text(
+                details!,
+                textAlign: TextAlign.center,
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: Colors.white70,
+                ),
+              ),
+            ],
+          ],
+        ),
       ),
     );
   }

@@ -739,6 +739,16 @@ def create_app() -> Flask:
         parent = Path(path).parent.as_posix() if path else None
         if parent == '.':
             parent = None
+        size_bytes: int | None = None
+        size_display: str | None = None
+        if path:
+            try:
+                file_path = paths.trip_root() / path
+                size_bytes = file_path.stat().st_size
+                size_display = _format_size(size_bytes)
+            except OSError:
+                size_bytes = None
+                size_display = None
         return {
             'path': path,
             'filename': filename,
@@ -754,6 +764,8 @@ def create_app() -> Flask:
             'has_gps': meta.has_gps if meta else False,
             'location_label': location_label,
             'duration_sec': meta.duration_sec if meta else None,
+            'size_bytes': size_bytes,
+            'size_display': size_display,
         }
 
     def _serialize_suggestion(suggestion: LocationSuggestion) -> dict:
