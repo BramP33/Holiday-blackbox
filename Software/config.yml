@@ -35,7 +35,7 @@ transcription:
     device: cpu
     beam_size: 3  # Reduce beam size for faster processing
     temperature: 0.0
-    vad_filter: true  # Enable VAD to reduce processing time
+    vad_filter: false  # Disable VAD - it was filtering out too much audio
   keywords:
     method: frequency
     top_k: 8  # Reduce keyword count

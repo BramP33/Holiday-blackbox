@@ -428,3 +428,10 @@ class TranscriptionQueue:
             ),
         )
         conn.commit()
+
+    def delete_transcript(self, rel_path: str) -> bool:
+        """Delete a transcript from the database. Returns True if a transcript was deleted."""
+        conn = self._conn_or_open()
+        cursor = conn.execute('DELETE FROM transcripts WHERE path = ?', (rel_path,))
+        conn.commit()
+        return cursor.rowcount > 0

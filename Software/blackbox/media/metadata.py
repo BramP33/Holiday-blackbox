@@ -573,6 +573,7 @@ class MediaMetadataIndex:
                 'filename,'
                 'path_tokens,'
                 'location_slug,'
+                'transcript,'
                 "content=''"
                 ')'
             )
@@ -769,10 +770,21 @@ class MediaMetadataIndex:
         if not self._fts_supported:
             return
         try:
+            # Get transcript text if available
+            transcript_text = ''
+            try:
+                from ..transcription.queue import TranscriptionQueue
+                queue = TranscriptionQueue(self._paths)
+                record = queue.get(meta.path)
+                if record and record.get('transcript'):
+                    transcript_text = (record['transcript'] or '').lower()
+            except:
+                pass  # Transcript not available
+            
             conn.execute('DELETE FROM videos_fts WHERE path = ?', (meta.path,))
             conn.execute(
-                'INSERT INTO videos_fts (path, city, admin, country_code, camera_make, camera_model, filename, path_tokens, location_slug) '
-                'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                'INSERT INTO videos_fts (path, city, admin, country_code, camera_make, camera_model, filename, path_tokens, location_slug, transcript) '
+                'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
                 (
                     meta.path,
                     (meta.city or '').lower(),
@@ -783,6 +795,7 @@ class MediaMetadataIndex:
                     (normalized.get('filename') or Path(meta.path).name).lower(),
                     (normalized.get('path_tokens') or meta.path.lower()),
                     normalized.get('location_slug') or '',
+                    transcript_text,
                 ),
             )
         except sqlite3.Error:
@@ -803,6 +816,19 @@ class MediaMetadataIndex:
             return
         if total and fts_total != total:
             try:
+                # Load all transcripts
+                transcript_map = {}
+                try:
+                    from ..transcription.queue import TranscriptionQueue
+                    queue = TranscriptionQueue(self._paths)
+                    queue_conn = queue._conn_or_open()
+                    transcript_rows = queue_conn.execute('SELECT path, transcript FROM transcripts WHERE state = ?', ('done',)).fetchall()
+                    for t_row in transcript_rows:
+                        if t_row['transcript']:
+                            transcript_map[t_row['path']] = (t_row['transcript'] or '').lower()
+                except:
+                    pass  # Transcripts not available
+                
                 conn.execute('DELETE FROM videos_fts')
                 rows = conn.execute(
                     'SELECT path, city, admin, country_code, camera_make, camera_model, '
@@ -812,9 +838,10 @@ class MediaMetadataIndex:
                     'FROM videos'
                 ).fetchall()
                 for row in rows:
+                    transcript_text = transcript_map.get(row['path'], '')
                     conn.execute(
-                        'INSERT INTO videos_fts (path, city, admin, country_code, camera_make, camera_model, filename, path_tokens, location_slug) '
-                        'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                        'INSERT INTO videos_fts (path, city, admin, country_code, camera_make, camera_model, filename, path_tokens, location_slug, transcript) '
+                        'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
                         (
                             row['path'],
                             (row['city'] or '').lower(),
@@ -825,6 +852,7 @@ class MediaMetadataIndex:
                             (row['filename'] or '').lower(),
                             (row['path_tokens'] or '').lower(),
                             (row['location_slug'] or '').lower(),
+                            transcript_text,
                         ),
                     )
                 conn.commit()

@@ -1076,10 +1076,11 @@ def create_app() -> Flask:
                     if existing and existing.get('transcript'):
                         continue  # Skip already transcribed files
                     
-                    # Queue for transcription
-                    transcription_queue.enqueue(rel_path)
+                    # Queue for transcription (pass Path object, not string)
+                    transcription_queue.enqueue(video_file)
                     queued_count += 1
-                except Exception:
+                except Exception as e:
+                    print(f"Failed to queue {rel_path}: {e}")
                     continue  # Skip files that can't be queued
             
             return jsonify({
@@ -1093,6 +1094,21 @@ def create_app() -> Flask:
                 'status': 'error',
                 'message': f'Failed to start transcription: {exc}'
             }), 500
+
+    @app.post('/api/transcription/delete')
+    def api_transcription_delete():
+        rel = request.form.get('p') or request.json.get('p') if request.is_json else None
+        if not rel:
+            return jsonify({'error': 'missing p'}), 400
+        try:
+            _, canonical = _resolve_trip_path(rel)
+        except ValueError:
+            return jsonify({'error': 'invalid path'}), 400
+        
+        deleted = transcription_queue.delete_transcript(canonical)
+        if deleted:
+            return jsonify({'status': 'deleted', 'path': canonical})
+        return jsonify({'status': 'not_found', 'path': canonical}), 404
 
     @app.get('/api/photos')
     def api_photos():

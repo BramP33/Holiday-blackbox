@@ -59,8 +59,9 @@ check_build() {
     else
         log "App binary found: $APP_BINARY"
         
-        # Check if source is newer than binary
-        if [ "$FLUTTER_DIR/lib" -nt "$APP_BINARY" ] || [ "$FLUTTER_DIR/pubspec.yaml" -nt "$APP_BINARY" ]; then
+        # Check if any Dart source file is newer than binary
+        NEWEST_SOURCE=$(find "$FLUTTER_DIR/lib" -name "*.dart" -type f -newer "$APP_BINARY" 2>/dev/null | head -1)
+        if [ -n "$NEWEST_SOURCE" ] || [ "$FLUTTER_DIR/pubspec.yaml" -nt "$APP_BINARY" ]; then
             warn "Source code is newer than binary. Rebuilding..."
             cd "$FLUTTER_DIR"
             flutter build linux --release
@@ -225,9 +226,6 @@ start_application() {
     
     # Start web server
     start_web_server
-    
-    # Start transcription worker
-    start_transcription_worker
     
     # Wait a moment for services to initialize
     sleep 3
