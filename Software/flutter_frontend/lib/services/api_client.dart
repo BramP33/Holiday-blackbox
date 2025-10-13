@@ -133,6 +133,14 @@ class ApiClient {
     }
   }
 
+  Future<void> deleteTranscript(String path) async {
+    final uri = _resolve('/api/transcription/delete');
+    final response = await _client.post(uri, body: {'p': path});
+    if (response.statusCode != 200) {
+      throw ApiException('Failed to delete transcript (${response.statusCode})');
+    }
+  }
+
   Future<void> startBackup() async {
     final uri = _resolve('/api/backup/start');
     final response = await _client.post(uri);

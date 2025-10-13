@@ -23,8 +23,10 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> {
 
   Timer? _positionTimer;
   Timer? _transcriptCheckTimer;
+  Timer? _controlsHideTimer;
   bool _initializing = true;
   bool _isPlaying = false;
+  bool _controlsVisible = true;
   Duration _position = Duration.zero;
   Duration _duration = Duration.zero;
   Duration? _scrubOverride;
@@ -77,6 +79,9 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> {
       if (_subtitleEntries.isEmpty) {
         _startTranscriptCheckTimer();
       }
+
+      // Start controls hide timer
+      _startControlsHideTimer();
 
       final subtitleResult = await subtitlesFuture;
       if (!mounted) return;
@@ -132,14 +137,18 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> {
   void _togglePlayback() {
     if (_controller.value.isPlaying) {
       _controller.pause();
+      _controlsHideTimer?.cancel();
     } else {
       _controller.play();
+      _startControlsHideTimer();
     }
+    _showControls();
   }
 
   void _seekBySeconds(int seconds) {
     final target = _position + Duration(seconds: seconds);
     _seekTo(target);
+    _showControls();
   }
 
   void _seekTo(Duration target) {
@@ -154,6 +163,7 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> {
     final clamped = Duration(microseconds: microseconds);
     _controller.seekTo(clamped);
     _updateSubtitleForPosition(clamped);
+    _showControls();
   }
 
   Duration get _effectiveSliderPosition => _scrubOverride ?? _position;
@@ -182,10 +192,40 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> {
     });
   }
 
+  void _startControlsHideTimer() {
+    _controlsHideTimer?.cancel();
+    _controlsHideTimer = Timer(const Duration(seconds: 3), () {
+      if (mounted && _isPlaying) {
+        setState(() {
+          _controlsVisible = false;
+        });
+      }
+    });
+  }
+
+  void _showControls() {
+    if (!_controlsVisible) {
+      setState(() {
+        _controlsVisible = true;
+      });
+    }
+    _startControlsHideTimer();
+  }
+
+  void _toggleControls() {
+    setState(() {
+      _controlsVisible = !_controlsVisible;
+    });
+    if (_controlsVisible) {
+      _startControlsHideTimer();
+    }
+  }
+
   @override
   void dispose() {
     _positionTimer?.cancel();
     _transcriptCheckTimer?.cancel();
+    _controlsHideTimer?.cancel();
     _controller.removeListener(_onVideoPlayerUpdate);
     _controller.dispose();
     super.dispose();
@@ -193,17 +233,25 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> {
 
   Future<_SubtitleLoadResult> _loadSubtitleEntries() async {
     try {
+      print('Loading subtitles for: ${widget.record.path}'); // Debug
       final api = ref.read(apiClientProvider);
       final response = await api.fetchVideoTranscript(widget.record.path);
+      print('Transcript response length: ${response?.length ?? 0}'); // Debug
       if (response == null || response.trim().isEmpty) {
+        print('No transcript content'); // Debug
         return const _SubtitleLoadResult(entries: []);
       }
       final entries = _parseSrt(response);
+      print('Parsed ${entries.length} subtitle entries'); // Debug
+      if (entries.isNotEmpty) {
+        print('First entry: ${entries.first.start} - ${entries.first.end}: "${entries.first.text}"'); // Debug
+      }
       if (entries.isEmpty) {
         return const _SubtitleLoadResult(entries: []);
       }
       return _SubtitleLoadResult(entries: entries, error: null);
     } catch (error) {
+      print('Error loading subtitles: $error'); // Debug
       // Silent fail for missing transcripts - don't show error if transcript just doesn't exist
       return const _SubtitleLoadResult(entries: []);
     }
@@ -225,6 +273,13 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> {
     if (nextIndex != null) {
       final current = _subtitleEntries[nextIndex];
       if (position >= current.start && position <= current.end) {
+        // Already in the right segment, ensure subtitle is set if it wasn't before
+        if (nextIndex != _activeSubtitleIndex || _activeSubtitle != current.text) {
+          setState(() {
+            _activeSubtitleIndex = nextIndex;
+            _activeSubtitle = current.text;
+          });
+        }
         return;
       }
       if (position < current.start) {
@@ -280,6 +335,7 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> {
 
     final entry = _subtitleEntries[nextIndex];
     if (nextIndex != _activeSubtitleIndex || entry.text != _activeSubtitle) {
+      print('Updating subtitle at ${position.inSeconds}s: "${entry.text}"'); // Debug
       setState(() {
         _activeSubtitleIndex = nextIndex;
         _activeSubtitle = entry.text;
@@ -420,12 +476,15 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> {
   Widget _buildPlayerBody(bool isCompact) {
     final hasError = _errorMessage != null;
 
-    return Stack(
-      fit: StackFit.expand,
-      children: [
-        Container(color: Colors.black),
-        if (!hasError && _controller.value.isInitialized)
-          VideoPlayer(_controller),
+    return GestureDetector(
+      onTap: _toggleControls,
+      behavior: HitTestBehavior.opaque,
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          Container(color: Colors.black),
+          if (!hasError && _controller.value.isInitialized)
+            VideoPlayer(_controller),
         if (_initializing)
           const Center(
             child: SizedBox(
@@ -453,7 +512,8 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> {
         if (!hasError && !_initializing) _buildControlsOverlay(isCompact),
         if (!hasError && _activeSubtitle != null && _activeSubtitle!.isNotEmpty)
           _buildSubtitleOverlay(isCompact),
-      ],
+        ],
+      ),
     );
   }
 
@@ -521,6 +581,10 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> {
   }
 
   Widget _buildControlsOverlay(bool isCompact) {
+    if (!_controlsVisible) {
+      return const SizedBox.shrink();
+    }
+
     final durationMs = _duration.inMilliseconds;
     final sliderMax = durationMs > 0 ? durationMs.toDouble() : 1.0;
     final rawPosition = _effectiveSliderPosition.inMilliseconds.toDouble();
