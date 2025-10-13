@@ -10,7 +10,6 @@ import '../models/trash_entry.dart';
 import '../state/app_environment.dart';
 import '../state/providers.dart';
 import '../theme.dart';
-import '../utils/camp_name_generator.dart';
 import '../widgets/journal_card.dart';
 import '../widgets/polaroid_tile.dart';
 import 'photo_viewer_screen.dart';
@@ -23,7 +22,8 @@ class MediaLibraryScreen extends ConsumerStatefulWidget {
   ConsumerState<MediaLibraryScreen> createState() => _MediaLibraryScreenState();
 }
 
-class _MediaLibraryScreenState extends ConsumerState<MediaLibraryScreen> with SingleTickerProviderStateMixin {
+class _MediaLibraryScreenState extends ConsumerState<MediaLibraryScreen>
+    with SingleTickerProviderStateMixin {
   late final TabController _tabController;
   int _photoPage = 1;
   int _videoPage = 1;
@@ -43,7 +43,6 @@ class _MediaLibraryScreenState extends ConsumerState<MediaLibraryScreen> with Si
           setState(() {});
         }
       });
-    CampNameGenerator.instance.ensureLoaded();
   }
 
   @override
@@ -62,11 +61,14 @@ class _MediaLibraryScreenState extends ConsumerState<MediaLibraryScreen> with Si
       loc.translate('media.library.tab.video'),
       loc.translate('media.library.tab.trash'),
     ];
-    final activeLabel = labels[_tabController.index.clamp(0, labels.length - 1)];
+    final activeLabel =
+        labels[_tabController.index.clamp(0, labels.length - 1)];
     final outer = ScreenLayout.outerPadding(context);
     final spacing = ScreenLayout.journalSpacing(context);
     final isCompact = ScreenLayout.isTargetSize(context);
-    final cardPadding = isCompact ? const EdgeInsets.all(14) : ScreenLayout.journalPadding(context);
+    final cardPadding = isCompact
+        ? const EdgeInsets.all(14)
+        : ScreenLayout.journalPadding(context);
 
     return Padding(
       padding: EdgeInsets.fromLTRB(outer.left, outer.top, outer.right, 0),
@@ -115,8 +117,10 @@ class _MediaLibraryScreenState extends ConsumerState<MediaLibraryScreen> with Si
                         final delta = metrics.pixels - _lastOffset;
                         if (delta.abs() > 12) {
                           final userDirection = notification.direction;
-                          final shouldHide = delta > 0 && userDirection == ScrollDirection.forward;
-                          final shouldShow = delta < 0 && userDirection == ScrollDirection.reverse;
+                          final shouldHide = delta > 0 &&
+                              userDirection == ScrollDirection.forward;
+                          final shouldShow = delta < 0 &&
+                              userDirection == ScrollDirection.reverse;
                           final clampedTop = metrics.pixels <= 0;
 
                           bool? nextVisible;
@@ -126,7 +130,8 @@ class _MediaLibraryScreenState extends ConsumerState<MediaLibraryScreen> with Si
                             nextVisible = false;
                           }
 
-                          if (nextVisible != null && nextVisible != _controlsVisible) {
+                          if (nextVisible != null &&
+                              nextVisible != _controlsVisible) {
                             setState(() {
                               _controlsVisible = nextVisible!;
                             });
@@ -165,11 +170,13 @@ class _MediaLibraryScreenState extends ConsumerState<MediaLibraryScreen> with Si
         padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
         child: TabBar(
           controller: _tabController,
-          indicatorPadding: const EdgeInsets.symmetric(vertical: 4, horizontal: 4),
+          indicatorPadding:
+              const EdgeInsets.symmetric(vertical: 4, horizontal: 4),
           indicator: BoxDecoration(
             color: AppColors.forest.withOpacity(0.85),
             borderRadius: BorderRadius.circular(10),
-            border: Border.all(color: AppColors.amber.withOpacity(0.75), width: 1.4),
+            border: Border.all(
+                color: AppColors.amber.withOpacity(0.75), width: 1.4),
           ),
           dividerColor: Colors.transparent,
           labelColor: AppColors.amber,
@@ -209,21 +216,28 @@ class _MediaLibraryScreenState extends ConsumerState<MediaLibraryScreen> with Si
                 itemCount: page.items.length,
                 itemBuilder: (context, index) {
                   final item = page.items[index];
-                  final pathSegments = item.path.split('/')..removeWhere((segment) => segment.isEmpty);
-                  final title = pathSegments.isNotEmpty ? pathSegments.last : 'Photo';
-                  final subtitle = pathSegments.length >= 2 ? pathSegments[pathSegments.length - 2] : 'Captured';
+                  final pathSegments = item.path.split('/')
+                    ..removeWhere((segment) => segment.isEmpty);
+                  final title =
+                      pathSegments.isNotEmpty ? pathSegments.last : 'Photo';
+                  final subtitle = pathSegments.length >= 2
+                      ? pathSegments[pathSegments.length - 2]
+                      : 'Captured';
                   return PolaroidTile(
                     child: CachedNetworkImage(
                       imageUrl: item.buildPreviewUri(env.baseUri).toString(),
                       fit: BoxFit.cover,
-                      placeholder: (context, url) => Container(color: AppColors.charcoalAlt),
-                      errorWidget: (context, url, error) => const Icon(Icons.broken_image, size: 32),
+                      placeholder: (context, url) =>
+                          Container(color: AppColors.charcoalAlt),
+                      errorWidget: (context, url, error) =>
+                          const Icon(Icons.broken_image, size: 32),
                     ),
                     title: title,
                     subtitle: subtitle,
                     onTap: () {
                       Navigator.of(context).push(
-                        MaterialPageRoute(builder: (_) => PhotoViewerScreen(item: item)),
+                        MaterialPageRoute(
+                            builder: (_) => PhotoViewerScreen(item: item)),
                       );
                     },
                   );
@@ -269,6 +283,7 @@ class _MediaLibraryScreenState extends ConsumerState<MediaLibraryScreen> with Si
     final spacing = ScreenLayout.journalSpacing(context);
     final isCompact = ScreenLayout.isTargetSize(context);
     final searchSpacing = spacing * (isCompact ? 0.45 : 0.6);
+    const gridColumns = 2;
 
     return videosAsync.when(
       data: (page) {
@@ -319,22 +334,24 @@ class _MediaLibraryScreenState extends ConsumerState<MediaLibraryScreen> with Si
             ),
             SizedBox(height: searchSpacing),
             Expanded(
-              child: ListView.separated(
-                padding: EdgeInsets.only(bottom: spacing * 0.5),
+              child: GridView.builder(
+                padding: EdgeInsets.only(bottom: spacing, top: 8),
+                gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: gridColumns,
+                  mainAxisSpacing: spacing,
+                  crossAxisSpacing: spacing,
+                  childAspectRatio: isCompact ? 0.82 : 0.88,
+                ),
                 itemCount: page.items.length,
-                separatorBuilder: (_, __) => SizedBox(height: spacing - 6),
                 itemBuilder: (context, index) {
                   final record = page.items[index];
-                  final isFirst = index == 0;
-                  final isLast = index == page.items.length - 1;
-                  return _VideoTimelineEntry(
+                  return _VideoGridCard(
                     record: record,
                     baseUri: env.baseUri,
-                    showTopConnector: !isFirst,
-                    showBottomConnector: !isLast,
                     onTap: () {
                       Navigator.of(context).push(
-                        MaterialPageRoute(builder: (_) => VideoPlayerScreen(record: record)),
+                        MaterialPageRoute(
+                            builder: (_) => VideoPlayerScreen(record: record)),
                       );
                     },
                     onDelete: () => _showDeleteVideoDialog(context, record),
@@ -354,10 +371,10 @@ class _MediaLibraryScreenState extends ConsumerState<MediaLibraryScreen> with Si
                   : null,
               onPrev: page.page > 1
                   ? () {
-                        setState(() {
-                          _videoPage -= 1;
-                        });
-                      }
+                      setState(() {
+                        _videoPage -= 1;
+                      });
+                    }
                   : null,
             ),
           ],
@@ -407,7 +424,8 @@ class _MediaLibraryScreenState extends ConsumerState<MediaLibraryScreen> with Si
                     );
                   }
                   ref.invalidate(trashEntriesProvider);
-                  ref.invalidate(videosProvider(VideoRequest(page: _videoPage, query: _videoQuery)));
+                  ref.invalidate(videosProvider(
+                      VideoRequest(page: _videoPage, query: _videoQuery)));
                   ref.invalidate(photosProvider(_photoPage));
                 } catch (error) {
                   if (context.mounted) {
@@ -428,7 +446,8 @@ class _MediaLibraryScreenState extends ConsumerState<MediaLibraryScreen> with Si
                 final confirm = await showDialog<bool>(
                       context: context,
                       builder: (dialogContext) => AlertDialog(
-                        title: Text(context.tr('media.library.trash.delete_confirm_title')),
+                        title: Text(context
+                            .tr('media.library.trash.delete_confirm_title')),
                         content: Text(
                           context.tr(
                             'media.library.trash.delete_confirm_body',
@@ -437,12 +456,16 @@ class _MediaLibraryScreenState extends ConsumerState<MediaLibraryScreen> with Si
                         ),
                         actions: [
                           TextButton(
-                            onPressed: () => Navigator.of(dialogContext).pop(false),
-                            child: Text(context.tr('media.library.common.cancel')),
+                            onPressed: () =>
+                                Navigator.of(dialogContext).pop(false),
+                            child:
+                                Text(context.tr('media.library.common.cancel')),
                           ),
                           FilledButton(
-                            onPressed: () => Navigator.of(dialogContext).pop(true),
-                            child: Text(context.tr('media.library.common.delete')),
+                            onPressed: () =>
+                                Navigator.of(dialogContext).pop(true),
+                            child:
+                                Text(context.tr('media.library.common.delete')),
                           ),
                         ],
                       ),
@@ -523,7 +546,9 @@ class _MediaLibraryScreenState extends ConsumerState<MediaLibraryScreen> with Si
   }
 
   bool get _isSearchVisible =>
-      _isSearchExpanded || (_videoQuery?.isNotEmpty ?? false) || _searchController.text.isNotEmpty;
+      _isSearchExpanded ||
+      (_videoQuery?.isNotEmpty ?? false) ||
+      _searchController.text.isNotEmpty;
 
   void _expandSearch() {
     if (_isSearchExpanded) return;
@@ -578,7 +603,7 @@ class _MediaLibraryScreenState extends ConsumerState<MediaLibraryScreen> with Si
       },
     ).then((action) async {
       if (action == null) return;
-      
+
       final api = ref.read(apiClientProvider);
       try {
         if (action == 'transcript') {
@@ -587,7 +612,8 @@ class _MediaLibraryScreenState extends ConsumerState<MediaLibraryScreen> with Si
           if (context.mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
-                content: Text('Transcript verwijderd voor ${record.filename ?? record.path.split('/').last}'),
+                content: Text(
+                    'Transcript verwijderd voor ${record.filename ?? record.path.split('/').last}'),
               ),
             );
             // Refresh the video list
@@ -603,7 +629,9 @@ class _MediaLibraryScreenState extends ConsumerState<MediaLibraryScreen> with Si
                 content: Text(
                   context.tr(
                     'media.library.delete.success',
-                    params: {'name': record.filename ?? record.path.split('/').last},
+                    params: {
+                      'name': record.filename ?? record.path.split('/').last
+                    },
                   ),
                 ),
               ),
@@ -640,7 +668,8 @@ class _TabStatusChip extends StatelessWidget {
   Widget build(BuildContext context) {
     final isTarget = ScreenLayout.isTargetSize(context);
     return Container(
-      padding: EdgeInsets.symmetric(horizontal: isTarget ? 14 : 16, vertical: isTarget ? 6 : 8),
+      padding: EdgeInsets.symmetric(
+          horizontal: isTarget ? 14 : 16, vertical: isTarget ? 6 : 8),
       decoration: BoxDecoration(
         color: AppColors.kraft.withOpacity(0.12),
         borderRadius: BorderRadius.circular(999),
@@ -648,14 +677,18 @@ class _TabStatusChip extends StatelessWidget {
       ),
       child: Text(
         label.toUpperCase(),
-        style: Theme.of(context).textTheme.labelMedium?.copyWith(color: AppColors.amber),
+        style: Theme.of(context)
+            .textTheme
+            .labelMedium
+            ?.copyWith(color: AppColors.amber),
       ),
     );
   }
 }
 
 class _HeaderControls extends StatelessWidget {
-  const _HeaderControls({super.key, required this.spacing, required this.activeLabel});
+  const _HeaderControls(
+      {super.key, required this.spacing, required this.activeLabel});
 
   final double spacing;
   final String activeLabel;
@@ -677,9 +710,11 @@ class _HeaderControls extends StatelessWidget {
             decoration: BoxDecoration(
               color: AppColors.charcoalAlt,
               borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: AppColors.rust.withOpacity(0.7), width: 1.4),
+              border: Border.all(
+                  color: AppColors.rust.withOpacity(0.7), width: 1.4),
             ),
-            child: const Icon(Icons.collections_bookmark_rounded, color: AppColors.amber, size: 22),
+            child: const Icon(Icons.collections_bookmark_rounded,
+                color: AppColors.amber, size: 22),
           ),
           SizedBox(width: isCompact ? 10 : 14),
           Expanded(
@@ -698,7 +733,8 @@ class _HeaderControls extends StatelessWidget {
                 SizedBox(height: isCompact ? 2 : 4),
                 Text(
                   context.tr('media.library.subtitle'),
-                  style: theme.textTheme.bodySmall?.copyWith(color: AppColors.sage),
+                  style: theme.textTheme.bodySmall
+                      ?.copyWith(color: AppColors.sage),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                 ),
@@ -714,7 +750,8 @@ class _HeaderControls extends StatelessWidget {
 }
 
 class _TabControls extends StatelessWidget {
-  const _TabControls({super.key, required this.spacing, required this.tabBuilder});
+  const _TabControls(
+      {super.key, required this.spacing, required this.tabBuilder});
 
   final double spacing;
   final Widget Function() tabBuilder;
@@ -740,7 +777,8 @@ class _BoardBadge extends StatelessWidget {
   Widget build(BuildContext context) {
     final isTarget = ScreenLayout.isTargetSize(context);
     return Container(
-      padding: EdgeInsets.symmetric(horizontal: isTarget ? 14 : 16, vertical: isTarget ? 5 : 7),
+      padding: EdgeInsets.symmetric(
+          horizontal: isTarget ? 14 : 16, vertical: isTarget ? 5 : 7),
       decoration: BoxDecoration(
         color: AppColors.amber,
         borderRadius: BorderRadius.circular(999),
@@ -755,7 +793,10 @@ class _BoardBadge extends StatelessWidget {
       ),
       child: Text(
         text,
-        style: Theme.of(context).textTheme.labelMedium?.copyWith(color: AppColors.charcoal, letterSpacing: 1.1),
+        style: Theme.of(context)
+            .textTheme
+            .labelMedium
+            ?.copyWith(color: AppColors.charcoal, letterSpacing: 1.1),
       ),
     );
   }
@@ -823,7 +864,8 @@ class _VideoSearchControl extends StatelessWidget {
   Widget _buildExpanded(BuildContext context, bool isCompact) {
     return Container(
       key: const ValueKey('search-expanded'),
-      padding: EdgeInsets.symmetric(horizontal: isCompact ? 12 : 14, vertical: isCompact ? 6 : 8),
+      padding: EdgeInsets.symmetric(
+          horizontal: isCompact ? 12 : 14, vertical: isCompact ? 6 : 8),
       decoration: BoxDecoration(
         color: AppColors.charcoalAlt,
         borderRadius: BorderRadius.circular(isCompact ? 18 : 20),
@@ -862,178 +904,242 @@ class _VideoSearchControl extends StatelessWidget {
   }
 }
 
-class _VideoTimelineEntry extends StatelessWidget {
-  const _VideoTimelineEntry({
+class _VideoGridCard extends StatelessWidget {
+  const _VideoGridCard({
     required this.record,
     required this.baseUri,
     required this.onTap,
-    required this.showTopConnector,
-    required this.showBottomConnector,
-    this.onDelete,
+    required this.onDelete,
   });
 
   final VideoRecord record;
   final Uri baseUri;
   final VoidCallback onTap;
-  final VoidCallback? onDelete;
-  final bool showTopConnector;
-  final bool showBottomConnector;
+  final VoidCallback onDelete;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final captured = record.capturedAtDisplay ?? 'Unknown date';
-    final recordingPlace = (record.locationLabel?.trim().isNotEmpty ?? false)
-        ? record.locationLabel!.trim()
-        : CampNameGenerator.instance.fallbackForKey(record.path);
-    final folder = record.folder?.trim().isNotEmpty == true ? record.folder!.trim() : null;
+    final flag = _flagEmojiForCode(record.countryCode);
+    final tooltipLabel = record.locationLabel?.isNotEmpty == true
+        ? record.locationLabel!
+        : (record.countryCode?.isNotEmpty == true
+            ? record.countryCode
+            : 'Onbekende locatie');
     final durationValue = record.duration != null
         ? _formatDurationValue(record.duration!)
         : context.tr('media.library.duration_placeholder');
-    final fileSizeValue = context.tr('media.library.filesize_placeholder');
-    final isTarget = ScreenLayout.isTargetSize(context);
-    final previewWidth = isTarget ? 120.0 : 140.0;
-    final containerPadding = EdgeInsets.all(isTarget ? 16 : 18);
-    final spacing = ScreenLayout.journalSpacing(context);
-    final markerConnectorHeight = isTarget ? 22.0 : 24.0;
-    final between = isTarget ? 14.0 : 18.0;
+    final sizeLabel = _fileSizeLabel(record);
+    final indicator = _TranscriptIndicator.fromRecord(record);
 
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(18),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          SizedBox(
-            width: 48,
-            child: Column(
-              children: [
-                if (showTopConnector)
-                  Container(width: 2, height: markerConnectorHeight, color: AppColors.sage.withOpacity(0.5)),
-                Container(
-                  width: 18,
-                  height: 18,
-                  decoration: BoxDecoration(
-                    color: AppColors.amber,
-                    borderRadius: BorderRadius.circular(9),
-                    border: Border.all(color: AppColors.charcoal, width: 2),
-                  ),
-                ),
-                if (showBottomConnector)
-                  Container(width: 2, height: markerConnectorHeight + 10, color: AppColors.sage.withOpacity(0.5)),
-              ],
-            ),
-          ),
-          Expanded(
-            child: Container(
-              decoration: BoxDecoration(
-                color: AppColors.charcoalAlt,
-                borderRadius: BorderRadius.circular(18),
-                border: Border.all(color: AppColors.rust.withOpacity(0.5), width: 1.4),
-              ),
-              padding: containerPadding,
-              child: Row(
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(20),
+      child: Material(
+        color: AppColors.charcoalAlt,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            InkWell(
+              onTap: onTap,
+              splashColor: AppColors.amber.withOpacity(0.18),
+              highlightColor: AppColors.amber.withOpacity(0.12),
+              child: Stack(
                 children: [
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(12),
-                    child: SizedBox(
-                      width: previewWidth,
-                      child: AspectRatio(
-                        aspectRatio: 16 / 9,
-                        child: CachedNetworkImage(
-                          imageUrl: record.buildThumbnailUri(baseUri).toString(),
-                          fit: BoxFit.cover,
-                          placeholder: (context, url) => Container(color: AppColors.charcoal),
-                          errorWidget: (context, url, error) => const Icon(Icons.videocam_off),
+                  AspectRatio(
+                    aspectRatio: 16 / 9,
+                    child: CachedNetworkImage(
+                      imageUrl: record.buildThumbnailUri(baseUri).toString(),
+                      fit: BoxFit.cover,
+                      placeholder: (context, url) =>
+                          Container(color: AppColors.charcoal),
+                      errorWidget: (context, url, error) => const Icon(
+                          Icons.videocam_off,
+                          size: 42,
+                          color: AppColors.sage),
+                    ),
+                  ),
+                  Positioned(
+                    right: 12,
+                    top: 12,
+                    child: Tooltip(
+                      message: indicator.tooltip,
+                      child: DecoratedBox(
+                        decoration: BoxDecoration(
+                          color: indicator.backgroundColor,
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(
+                              color: indicator.borderColor, width: 1.2),
+                          boxShadow: const [
+                            BoxShadow(
+                              color: Color(0x55000000),
+                              offset: Offset(0, 2),
+                              blurRadius: 6,
+                            ),
+                          ],
+                        ),
+                        child: Padding(
+                          padding: const EdgeInsets.all(6),
+                          child: Icon(
+                            Icons.description_rounded,
+                            color: indicator.iconColor,
+                            size: 20,
+                          ),
                         ),
                       ),
                     ),
                   ),
-                  SizedBox(width: between),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          record.filename ?? record.path.split('/').last,
-                          style: theme.textTheme.titleSmall,
-                        ),
-                        SizedBox(height: isTarget ? 4 : 6),
-                        Text(
-                          context.tr('media.library.recording_place', params: {'place': recordingPlace}),
-                          style: theme.textTheme.bodySmall?.copyWith(color: AppColors.amber),
-                        ),
-                        SizedBox(height: isTarget ? 2 : 4),
-                        Text(
-                          context.tr('media.library.captured_at', params: {'date': captured}),
-                          style: theme.textTheme.bodySmall,
-                        ),
-                        if (folder != null) ...[
-                          SizedBox(height: isTarget ? 2 : 4),
-                          Text(
-                            context.tr('media.library.folder', params: {'folder': folder}),
-                            style: theme.textTheme.bodySmall?.copyWith(color: AppColors.sage),
-                          ),
-                        ],
-                        SizedBox(height: isTarget ? 6 : 8),
-                        Text(
-                          context.tr('media.library.duration', params: {'duration': durationValue}),
-                          style: theme.textTheme.bodySmall,
-                        ),
-                        SizedBox(height: isTarget ? 2 : 4),
-                        Text(
-                          context.tr('media.library.filesize', params: {'size': fileSizeValue}),
-                          style: theme.textTheme.bodySmall,
-                        ),
-                        if (record.transcriptAvailable || record.transcriptState != null)
-                          Padding(
-                            padding: EdgeInsets.only(top: isTarget ? 4 : 6),
-                            child: Text(
-                              _transcriptLabel(record),
-                              style: theme.textTheme.bodySmall?.copyWith(color: AppColors.sage),
-                            ),
-                          ),
-                      ],
-                    ),
-                  ),
-                  Padding(
-                    padding: EdgeInsets.only(left: spacing * 0.2),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        if (onDelete != null)
-                          InkWell(
-                            onTap: onDelete,
-                            borderRadius: BorderRadius.circular(20),
-                            child: Padding(
-                              padding: const EdgeInsets.all(8),
-                              child: Icon(
-                                Icons.delete_outline,
-                                color: AppColors.rust,
-                                size: 28,
-                              ),
-                            ),
-                          ),
-                        if (onDelete != null) SizedBox(height: 8),
-                        const Icon(Icons.open_in_new, color: AppColors.amber),
-                      ],
+                  const Positioned(
+                    left: 12,
+                    bottom: 12,
+                    child: Icon(
+                      Icons.play_circle_fill_rounded,
+                      color: Colors.white70,
+                      size: 34,
                     ),
                   ),
                 ],
               ),
             ),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Tooltip(
+                    message: tooltipLabel,
+                    child: Align(
+                      alignment: Alignment.center,
+                      child: flag != null
+                          ? Text(
+                              flag,
+                              style: const TextStyle(fontSize: 30),
+                            )
+                          : const Icon(Icons.public,
+                              color: AppColors.sage, size: 26),
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      _VideoMetaPill(
+                        icon: Icons.schedule_rounded,
+                        label: durationValue,
+                      ),
+                      _VideoMetaPill(
+                        icon: Icons.sd_card_rounded,
+                        label: sizeLabel,
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            Divider(
+              height: 1,
+              thickness: 1,
+              color: AppColors.charcoal.withOpacity(0.45),
+            ),
+            InkWell(
+              onTap: onDelete,
+              splashColor: AppColors.rust.withOpacity(0.2),
+              child: Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                decoration: BoxDecoration(
+                  color: AppColors.rust.withOpacity(0.16),
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    const Icon(Icons.delete_outline, color: AppColors.rust),
+                    const SizedBox(width: 8),
+                    Text(
+                      context.tr('common.delete'),
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        color: AppColors.rust,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _VideoMetaPill extends StatelessWidget {
+  const _VideoMetaPill({required this.icon, required this.label});
+
+  final IconData icon;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      decoration: BoxDecoration(
+        color: AppColors.charcoal.withOpacity(0.35),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: AppColors.sage.withOpacity(0.5), width: 1),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 16, color: AppColors.amber),
+          const SizedBox(width: 6),
+          Text(
+            label,
+            style: theme.textTheme.bodySmall?.copyWith(color: AppColors.kraft),
           ),
         ],
       ),
     );
   }
+}
 
-  String _transcriptLabel(VideoRecord record) {
+class _TranscriptIndicator {
+  const _TranscriptIndicator({
+    required this.iconColor,
+    required this.backgroundColor,
+    required this.borderColor,
+    required this.tooltip,
+  });
+
+  final Color iconColor;
+  final Color backgroundColor;
+  final Color borderColor;
+  final String tooltip;
+
+  factory _TranscriptIndicator.fromRecord(VideoRecord record) {
+    final state = record.transcriptState?.toLowerCase().trim();
     if (record.transcriptAvailable) {
-      return 'Transcript ready';
+      return _TranscriptIndicator(
+        iconColor: Colors.white,
+        backgroundColor: const Color(0x33000000),
+        borderColor: Colors.white70,
+        tooltip: 'Transcriptie gereed',
+      );
     }
-    final state = record.transcriptState ?? 'pending';
-    return 'Transcript: $state';
+    if (state == 'error' || state == 'failed') {
+      return _TranscriptIndicator(
+        iconColor: AppColors.rust,
+        backgroundColor: AppColors.rust.withOpacity(0.18),
+        borderColor: AppColors.rust.withOpacity(0.6),
+        tooltip: 'Transcriptie mislukt',
+      );
+    }
+    return _TranscriptIndicator(
+      iconColor: AppColors.amber,
+      backgroundColor: AppColors.amber.withOpacity(0.18),
+      borderColor: AppColors.amber.withOpacity(0.6),
+      tooltip: 'Transcriptie in wachtrij',
+    );
   }
 }
 
@@ -1073,7 +1179,8 @@ class _TrashEntryCard extends StatelessWidget {
 
     return JournalCard(
       heroBadge: badge,
-      padding: ScreenLayout.journalPadding(context).copyWith(bottom: spacing - 4),
+      padding:
+          ScreenLayout.journalPadding(context).copyWith(bottom: spacing - 4),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -1086,7 +1193,8 @@ class _TrashEntryCard extends StatelessWidget {
                 decoration: BoxDecoration(
                   color: AppColors.charcoal,
                   borderRadius: BorderRadius.circular(14),
-                  border: Border.all(color: AppColors.rust.withOpacity(0.7), width: 1.6),
+                  border: Border.all(
+                      color: AppColors.rust.withOpacity(0.7), width: 1.6),
                 ),
                 child: Icon(
                   entry.isVideo
@@ -1104,13 +1212,15 @@ class _TrashEntryCard extends StatelessWidget {
                   children: [
                     Text(
                       entry.filename,
-                      style: theme.textTheme.titleSmall?.copyWith(color: AppColors.kraft),
+                      style: theme.textTheme.titleSmall
+                          ?.copyWith(color: AppColors.kraft),
                     ),
                     if (entry.folder != null) ...[
                       const SizedBox(height: 4),
                       Text(
                         entry.folder!,
-                        style: theme.textTheme.bodySmall?.copyWith(color: AppColors.sage),
+                        style: theme.textTheme.bodySmall
+                            ?.copyWith(color: AppColors.sage),
                       ),
                     ],
                     const SizedBox(height: 6),
@@ -1119,9 +1229,12 @@ class _TrashEntryCard extends StatelessWidget {
                       runSpacing: 4,
                       children: [
                         if (entry.sizeDisplay != null)
-                          _MetaChip(icon: Icons.sd_card, label: entry.sizeDisplay!),
+                          _MetaChip(
+                              icon: Icons.sd_card, label: entry.sizeDisplay!),
                         if (entry.trashedAtDisplay != null)
-                          _MetaChip(icon: Icons.schedule, label: entry.trashedAtDisplay!),
+                          _MetaChip(
+                              icon: Icons.schedule,
+                              label: entry.trashedAtDisplay!),
                         _MetaChip(
                           icon: Icons.folder_open,
                           label: entry.originalRel ?? entry.storedRel,
@@ -1201,7 +1314,10 @@ class _EmptyBoard extends StatelessWidget {
         child: Text(
           message,
           textAlign: TextAlign.center,
-          style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: AppColors.sage),
+          style: Theme.of(context)
+              .textTheme
+              .bodyMedium
+              ?.copyWith(color: AppColors.sage),
         ),
       ),
     );
@@ -1211,7 +1327,8 @@ class _EmptyBoard extends StatelessWidget {
 enum _PlaceholderVariant { photo, video }
 
 class _DisconnectedPlaceholder extends StatelessWidget {
-  const _DisconnectedPlaceholder({required this.variant, required this.onRetry});
+  const _DisconnectedPlaceholder(
+      {required this.variant, required this.onRetry});
 
   final _PlaceholderVariant variant;
   final VoidCallback onRetry;
@@ -1230,7 +1347,8 @@ class _DisconnectedPlaceholder extends StatelessWidget {
 
     return LayoutBuilder(
       builder: (context, constraints) {
-        final maxHeight = constraints.maxHeight.isFinite ? constraints.maxHeight : 480.0;
+        final maxHeight =
+            constraints.maxHeight.isFinite ? constraints.maxHeight : 480.0;
         final minHeight = (maxHeight - 24).clamp(320.0, double.infinity);
         return SingleChildScrollView(
           physics: const BouncingScrollPhysics(),
@@ -1251,13 +1369,14 @@ class _DisconnectedPlaceholder extends StatelessWidget {
                       const SizedBox(height: 8),
                       Text(
                         subtitle,
-                        style: theme.textTheme.bodySmall?.copyWith(color: AppColors.sage, height: 1.4),
+                        style: theme.textTheme.bodySmall
+                            ?.copyWith(color: AppColors.sage, height: 1.4),
                       ),
                       const SizedBox(height: 24),
                       if (variant == _PlaceholderVariant.photo)
                         const _PhotoPlaceholderGrid()
                       else
-                        const _VideoPlaceholderList(),
+                        const _VideoPlaceholderGrid(),
                       SizedBox(height: spacing - 4),
                       Wrap(
                         spacing: spacing - 6,
@@ -1268,13 +1387,15 @@ class _DisconnectedPlaceholder extends StatelessWidget {
                             width: 320,
                             child: Text(
                               context.tr('media.library.offline.hint'),
-                              style: theme.textTheme.bodySmall?.copyWith(color: AppColors.sage),
+                              style: theme.textTheme.bodySmall
+                                  ?.copyWith(color: AppColors.sage),
                             ),
                           ),
                           OutlinedButton.icon(
                             onPressed: onRetry,
                             icon: const Icon(Icons.refresh_rounded),
-                            label: Text(context.tr('media.library.offline.retry')),
+                            label:
+                                Text(context.tr('media.library.offline.retry')),
                           ),
                         ],
                       ),
@@ -1295,14 +1416,22 @@ class _PhotoPlaceholderGrid extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final captions = ['Awaiting sync', 'Field log', 'Next capture', 'Deck ready', 'Holding spot', 'Travel frame'];
+    final captions = [
+      'Awaiting sync',
+      'Field log',
+      'Next capture',
+      'Deck ready',
+      'Holding spot',
+      'Travel frame'
+    ];
     final spacing = ScreenLayout.journalSpacing(context);
     final crossAxisCount = ScreenLayout.photoCrossAxisCount(context);
 
     return LayoutBuilder(
       builder: (context, constraints) {
         final totalSpacing = (crossAxisCount - 1) * spacing;
-        final tileWidth = (constraints.maxWidth - totalSpacing) / crossAxisCount;
+        final tileWidth =
+            (constraints.maxWidth - totalSpacing) / crossAxisCount;
 
         return Wrap(
           spacing: spacing,
@@ -1327,7 +1456,8 @@ class _PhotoPlaceholderGrid extends StatelessWidget {
                       ),
                     ),
                     child: const Center(
-                      child: Icon(Icons.photo_outlined, size: 48, color: AppColors.kraft),
+                      child: Icon(Icons.photo_outlined,
+                          size: 48, color: AppColors.kraft),
                     ),
                   ),
                 ),
@@ -1342,115 +1472,126 @@ class _PhotoPlaceholderGrid extends StatelessWidget {
   }
 }
 
-class _VideoPlaceholderList extends StatelessWidget {
-  const _VideoPlaceholderList();
+class _VideoPlaceholderGrid extends StatelessWidget {
+  const _VideoPlaceholderGrid();
 
   @override
   Widget build(BuildContext context) {
     final spacing = ScreenLayout.journalSpacing(context);
-    final isTarget = ScreenLayout.isTargetSize(context);
-    final previewWidth = isTarget ? 120.0 : 140.0;
-    final connectorShort = isTarget ? 20.0 : 24.0;
+    const columns = 2;
+    final examples = ['NL', 'DE', 'FR', 'NO'];
 
-    return Column(
-      children: List.generate(4, (index) {
-        final isFirst = index == 0;
-        final isLast = index == 3;
-        final placeholderName = CampNameGenerator.instance.fallbackForKey('placeholder-$index');
-        return Padding(
-          padding: EdgeInsets.only(bottom: isLast ? 0 : spacing - 10),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              SizedBox(
-                width: 48,
-                child: Column(
-                  children: [
-                    if (!isFirst)
-                      Container(width: 2, height: connectorShort, color: AppColors.sage.withOpacity(0.35)),
-                    Container(
-                      width: 18,
-                      height: 18,
-                      decoration: BoxDecoration(
-                        color: AppColors.amber,
-                        borderRadius: BorderRadius.circular(9),
-                        border: Border.all(color: AppColors.charcoal, width: 2),
-                      ),
-                    ),
-                    if (!isLast)
-                      Container(width: 2, height: connectorShort + 10, color: AppColors.sage.withOpacity(0.35)),
-                  ],
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final maxWidth = constraints.maxWidth.isFinite
+            ? constraints.maxWidth
+            : ScreenLayout.targetWidth.toDouble();
+        final tileWidth = (maxWidth - (columns - 1) * spacing) / columns;
+
+        return Wrap(
+          spacing: spacing,
+          runSpacing: spacing,
+          children: List.generate(examples.length, (index) {
+            final code = examples[index % examples.length];
+            final flag = _flagEmojiForCode(code) ?? '🏕️';
+            return SizedBox(
+              width: tileWidth,
+              child: _VideoPlaceholderCard(flag: flag),
+            );
+          }),
+        );
+      },
+    );
+  }
+}
+
+class _VideoPlaceholderCard extends StatelessWidget {
+  const _VideoPlaceholderCard({required this.flag});
+
+  final String flag;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final durationPlaceholder =
+        context.tr('media.library.duration_placeholder');
+    final sizePlaceholder = context.tr('media.library.filesize_placeholder');
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(20),
+      child: Container(
+        decoration: BoxDecoration(
+          color: AppColors.charcoalAlt,
+          border:
+              Border.all(color: AppColors.rust.withOpacity(0.35), width: 1.2),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            AspectRatio(
+              aspectRatio: 16 / 9,
+              child: Container(
+                decoration: const BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [AppColors.charcoal, AppColors.charcoalAlt],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                  ),
+                ),
+                child: const Center(
+                  child: Icon(Icons.videocam_outlined,
+                      color: AppColors.kraft, size: 38),
                 ),
               ),
-              Expanded(
-                child: Container(
-                  decoration: BoxDecoration(
-                    color: AppColors.charcoalAlt,
-                    borderRadius: BorderRadius.circular(18),
-                    border: Border.all(color: AppColors.rust.withOpacity(0.4), width: 1.4),
+            ),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Align(
+                    alignment: Alignment.center,
+                    child: Text(flag, style: const TextStyle(fontSize: 30)),
                   ),
-                  padding: EdgeInsets.all(isTarget ? 16 : 18),
-                  child: Row(
+                  const SizedBox(height: 14),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      Container(
-                        width: previewWidth,
-                        height: previewWidth * 9 / 16,
-                        decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(12),
-                          gradient: LinearGradient(
-                            colors: [
-                              AppColors.forest.withOpacity(0.7),
-                              AppColors.forest.withOpacity(0.3),
-                            ],
-                            begin: Alignment.topLeft,
-                            end: Alignment.bottomRight,
-                          ),
-                        ),
-                        child: const Icon(Icons.videocam_outlined, color: AppColors.kraft, size: 36),
-                      ),
-                      SizedBox(width: isTarget ? 14 : 18),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              context.tr(
-                                'media.library.recording_place',
-                                params: {'place': placeholderName},
-                              ),
-                              style: Theme.of(context).textTheme.titleSmall,
-                            ),
-                            SizedBox(height: isTarget ? 4 : 6),
-                            Text(
-                              context.tr(
-                                'media.library.duration',
-                                params: {
-                                  'duration': context.tr('media.library.duration_placeholder'),
-                                },
-                              ),
-                              style: Theme.of(context).textTheme.bodySmall?.copyWith(color: AppColors.sage),
-                            ),
-                            SizedBox(height: isTarget ? 2 : 4),
-                            Text(
-                              context.tr(
-                                'media.library.filesize',
-                                params: {
-                                  'size': context.tr('media.library.filesize_placeholder'),
-                                },
-                              ),
-                              style: Theme.of(context).textTheme.bodySmall,
-                            ),
-                          ],
-                        ),
-                      ),
+                      _VideoMetaPill(
+                          icon: Icons.schedule_rounded,
+                          label: durationPlaceholder),
+                      _VideoMetaPill(
+                          icon: Icons.sd_card_rounded, label: sizePlaceholder),
                     ],
                   ),
-                ),
+                ],
               ),
-            ],
-          ),
-        );
-      }),
+            ),
+            Divider(
+              height: 1,
+              thickness: 1,
+              color: AppColors.charcoal.withOpacity(0.4),
+            ),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              color: AppColors.rust.withOpacity(0.12),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Icon(Icons.delete_outline, color: AppColors.rust),
+                  const SizedBox(width: 8),
+                  Text(
+                    context.tr('common.delete'),
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      color: AppColors.rust,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
@@ -1484,18 +1625,23 @@ class PaginationControls extends StatelessWidget {
           ),
           SizedBox(width: spacing - 10),
           Container(
-            padding: EdgeInsets.symmetric(horizontal: 16, vertical: spacing > 24 ? 8 : 6),
+            padding: EdgeInsets.symmetric(
+                horizontal: 16, vertical: spacing > 24 ? 8 : 6),
             decoration: BoxDecoration(
               color: AppColors.kraft.withOpacity(0.08),
               borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: AppColors.rust.withOpacity(0.6), width: 1.2),
+              border: Border.all(
+                  color: AppColors.rust.withOpacity(0.6), width: 1.2),
             ),
             child: Text(
               context.tr(
                 'media.library.pagination.label',
                 params: {'page': '$page', 'pages': '$pageCount'},
               ),
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(color: AppColors.kraft),
+              style: Theme.of(context)
+                  .textTheme
+                  .bodySmall
+                  ?.copyWith(color: AppColors.kraft),
             ),
           ),
           SizedBox(width: spacing - 10),
@@ -1514,4 +1660,45 @@ String _formatDurationValue(Duration duration) {
   final minutes = duration.inMinutes;
   final seconds = duration.inSeconds % 60;
   return '${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}';
+}
+
+String? _flagEmojiForCode(String? code) {
+  if (code == null || code.length != 2) return null;
+  final normalized = code.toUpperCase();
+  final first = normalized.codeUnitAt(0);
+  final second = normalized.codeUnitAt(1);
+  if (first < 65 || first > 90 || second < 65 || second > 90) {
+    return null;
+  }
+  const base = 0x1F1E6;
+  final firstFlag = base + (first - 65);
+  final secondFlag = base + (second - 65);
+  return String.fromCharCodes([firstFlag, secondFlag]);
+}
+
+String _fileSizeLabel(VideoRecord record) {
+  final display = record.sizeDisplay;
+  if (display != null && display.trim().isNotEmpty) {
+    return display;
+  }
+  final bytes = record.sizeBytes;
+  if (bytes != null && bytes > 0) {
+    return _formatFileSize(bytes);
+  }
+  return '--';
+}
+
+String _formatFileSize(int bytes) {
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  double value = bytes.toDouble();
+  for (final unit in units) {
+    if (value < 1024 || unit == units.last) {
+      if (unit == 'B') {
+        return '${value.toInt()} $unit';
+      }
+      return '${value.toStringAsFixed(1)} $unit';
+    }
+    value /= 1024;
+  }
+  return '$bytes B';
 }
