@@ -1,0 +1,23 @@
+[Unit]
+Description=Blackbox Flutter UI (X11)
+After=systemd-user-sessions.service blackbox-web.service blackbox.service graphical.target
+Wants=blackbox-web.service blackbox.service
+Requires=systemd-user-sessions.service
+
+[Service]
+User=blackbox
+Group=blackbox
+PAMName=login
+Environment=DISPLAY=:0
+Environment=BLACKBOX_BASE_URL=http://127.0.0.1:5000
+WorkingDirectory=/home/blackbox
+# Wait for backend to be ready (max 60 seconds)
+ExecStartPre=/bin/bash -c 'for i in {1..60}; do curl -s http://127.0.0.1:5000/api/media >/dev/null 2>&1 && break || sleep 1; done'
+# Try with startx first (for headless), fall back to direct execution if X is already running
+ExecStartPre=/bin/bash -c 'if pgrep -x Xorg > /dev/null || pgrep -x Xwayland > /dev/null; then exit 0; else /usr/bin/test -x /home/blackbox/Holiday-blackbox/Software/flutter_frontend/build/linux/arm64/release/bundle/flutter_frontend; fi'
+ExecStart=/bin/bash -c 'if pgrep -x Xorg > /dev/null || pgrep -x Xwayland > /dev/null; then /home/blackbox/Holiday-blackbox/Software/flutter_frontend/build/linux/arm64/release/bundle/flutter_frontend --window-decorator=false; else /usr/bin/startx /home/blackbox/.xinitrc -- -nocursor -keeptty; fi'
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

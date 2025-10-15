@@ -1,0 +1,17 @@
+[Unit]
+Description=Holiday Blackbox Flutter GUI
+After=graphical.target blackbox-web.service
+Wants=graphical.target
+
+[Service]
+Type=simple
+Environment="DISPLAY=:0"
+Environment="XAUTHORITY=/home/blackbox/.Xauthority"
+WorkingDirectory=/home/blackbox/Holiday-blackbox/Software/flutter_frontend
+ExecStart=/home/blackbox/Holiday-blackbox/Software/flutter_frontend/build/linux/arm64/release/bundle/flutter_frontend
+Restart=on-failure
+RestartSec=5
+User=blackbox
+
+[Install]
+WantedBy=graphical.target

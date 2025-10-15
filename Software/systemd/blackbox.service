@@ -5,9 +5,11 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-WorkingDirectory=%h/Holiday-blackbox/Software
+User=blackbox
+WorkingDirectory=/home/blackbox/Holiday-blackbox/Software
 ExecStart=/usr/bin/python3 -m blackbox.main
 Restart=on-failure
+RestartSec=5
 
 [Install]
 WantedBy=multi-user.target
