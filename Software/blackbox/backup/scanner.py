@@ -155,8 +155,57 @@ def find_source_mounts(source_roots: Iterable[str]) -> list[Path]:
     return medias
 
 
-def classify_device_code(root: Path) -> str:
-    """Return a device code: gopro|drone|360|lumix_g7|camera"""
+def classify_device_code(root: Path, device_label: str | None = None) -> str:
+    """Return a device code: gopro|drone|360|lumix_g7|mobile|camera
+    
+    Classification is based on:
+    1. Device label (for uploads via web)
+    2. File naming patterns (GOPRxxxx.mp4, DJI_xxxx.MP4, Pxxxxxxx.mp4)
+    3. File extensions (.360)
+    4. Mount point name patterns
+    """
+    # Check if uploaded via web (mobile)
+    if device_label and device_label.lower() in ('uploads', 'upload'):
+        return 'mobile'
+    
+    # Check file patterns in the source
+    # Prefer DCIM folder if it exists for faster scanning
+    scan_root = root
+    for dn in DCIM_NAMES:
+        dcim = root / dn
+        if dcim.exists() and dcim.is_dir():
+            scan_root = dcim
+            break
+    
+    try:
+        # Sample first 100 files for pattern detection
+        checked = 0
+        max_check = 100
+        for dirpath, _, files in os.walk(scan_root):
+            for filename in files:
+                if checked >= max_check:
+                    break
+                checked += 1
+                
+                # GoPro: GOPRxxxx.mp4
+                if filename.upper().startswith('GOPR'):
+                    return 'gopro'
+                # DJI Drone: DJI_xxxx.MP4
+                if filename.upper().startswith('DJI_'):
+                    return 'drone'
+                # 360 Camera: *.360
+                if filename.lower().endswith('.360'):
+                    return '360'
+                # Panasonic Lumix G7: Pxxxxxxx.mp4 (starts with capital P)
+                if len(filename) > 0 and filename[0] == 'P' and filename[0].isupper():
+                    if Path(filename).suffix.lower() in MEDIA_EXTS:
+                        return 'lumix_g7'
+            if checked >= max_check:
+                break
+    except Exception:
+        pass
+    
+    # Fallback to mount name patterns
     name = root.name.lower()
     if 'gopro' in name:
         return 'gopro'
@@ -169,4 +218,5 @@ def classify_device_code(root: Path) -> str:
     # Lumix G7 hints
     if any(s in name for s in ('lumix', 'panasonic', 'g7')):
         return 'lumix_g7'
+    
     return 'camera'

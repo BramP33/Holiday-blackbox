@@ -82,7 +82,7 @@ def copy_from_source(
     min_timestamp: Optional[float] = None,
     device_label_override: Optional[str] = None,
 ) -> CopyResult:
-    device_code = classify_device_code(source_root)
+    device_code = classify_device_code(source_root, device_label_override)
     # Prefer DCIM folder if present (case-insensitive)
     dcim_dir = None
     for dn in ('DCIM', 'dcim'):
