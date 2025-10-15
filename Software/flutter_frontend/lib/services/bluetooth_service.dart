@@ -174,12 +174,19 @@ class BluetoothService {
   /// Stop scanning for devices
   Future<BluetoothServiceResult<bool>> stopScan() async {
     try {
+      _isScanning = false;
+      
+      // Kill the scan process if it's running
+      if (_scanProcess != null) {
+        _scanProcess!.kill();
+        _scanProcess = null;
+      }
+      
       final result = await Process.run('bluetoothctl', ['scan', 'off'], runInShell: true);
       if (result.exitCode != 0) {
         return BluetoothServiceResult.failure('Failed to stop Bluetooth scan: ${result.stderr}');
       }
 
-      _isScanning = false;
       return const BluetoothServiceResult.success(true);
     } catch (e) {
       return BluetoothServiceResult.failure('Error stopping Bluetooth scan: $e');
@@ -414,20 +421,64 @@ class BluetoothService {
   }
 
   /// Background task to discover devices while scanning
-  void _discoverDevices() {
-    Timer.periodic(const Duration(seconds: 3), (timer) async {
-      if (!_isScanning) {
-        timer.cancel();
-        return;
-      }
+  Process? _scanProcess;
+
+  void _discoverDevices() async {
+    try {
+      // Start bluetoothctl in interactive mode to monitor scan results
+      _scanProcess = await Process.start('bluetoothctl', ['scan', 'on']);
       
-      final devicesResult = await getDevices();
-      if (devicesResult.isSuccess) {
-        _devices.clear();
-        _devices.addAll(devicesResult.data!);
-        _devicesController.add(List.from(_devices));
-      }
-    });
+      // Listen to stdout for device discoveries
+      _scanProcess!.stdout.transform(systemEncoding.decoder).listen((output) {
+        // Look for device discovery lines
+        // Format: "[NEW] Device AA:BB:CC:DD:EE:FF Device Name"
+        final lines = output.split('\n');
+        for (final line in lines) {
+          final match = RegExp(r'\[(?:NEW|CHG)\] Device ([A-Fa-f0-9:]{17}) (.+)').firstMatch(line);
+          if (match != null) {
+            final address = match.group(1)!;
+            final name = match.group(2)!.trim();
+            
+            // Add or update device
+            final existingIndex = _devices.indexWhere((d) => d.address == address);
+            final device = BluetoothDevice(
+              name: name,
+              address: address,
+              status: BluetoothDeviceStatus.available,
+            );
+            
+            if (existingIndex >= 0) {
+              _devices[existingIndex] = device;
+            } else {
+              _devices.add(device);
+            }
+            
+            _devicesController.add(List.from(_devices));
+          }
+        }
+      });
+      
+      // Also poll for paired/known devices every 5 seconds
+      Timer.periodic(const Duration(seconds: 5), (timer) async {
+        if (!_isScanning) {
+          timer.cancel();
+          return;
+        }
+        
+        final devicesResult = await getDevices();
+        if (devicesResult.isSuccess) {
+          // Merge with existing discovered devices
+          for (final device in devicesResult.data!) {
+            if (!_devices.any((d) => d.address == device.address)) {
+              _devices.add(device);
+            }
+          }
+          _devicesController.add(List.from(_devices));
+        }
+      });
+    } catch (e) {
+      print('Error in _discoverDevices: $e');
+    }
   }
 
   /// Dispose resources
