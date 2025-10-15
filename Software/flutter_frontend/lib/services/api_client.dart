@@ -149,6 +149,26 @@ class ApiClient {
     }
   }
 
+  Future<Map<String, dynamic>> startSsdExport({String? mountpoint}) async {
+    final uri = _resolve('/api/backup/export/start');
+    http.Response response;
+    if (mountpoint != null && mountpoint.isNotEmpty) {
+      response = await _client.post(
+        uri,
+        headers: {'Content-Type': 'application/json'},
+        body: json.encode({'mountpoint': mountpoint}),
+      );
+    } else {
+      response = await _client.post(uri);
+    }
+    if (response.statusCode != 200) {
+      throw ApiException(
+          'Failed to start SSD export (${response.statusCode})');
+    }
+    final jsonMap = json.decode(response.body) as Map<String, dynamic>;
+    return jsonMap;
+  }
+
   Future<Map<String, dynamic>> fetchBackupStatus() async {
     final uri = _resolve('/api/backup/status');
     final response = await _client.get(uri);
@@ -165,6 +185,17 @@ class ApiClient {
     if (response.statusCode != 200) {
       throw ApiException('Failed to cancel backup (${response.statusCode})');
     }
+  }
+
+  Future<Map<String, dynamic>> cancelSsdExport() async {
+    final uri = _resolve('/api/backup/export/cancel');
+    final response = await _client.post(uri);
+    if (response.statusCode != 200) {
+      throw ApiException(
+          'Failed to cancel SSD export (${response.statusCode})');
+    }
+    final jsonMap = json.decode(response.body) as Map<String, dynamic>;
+    return jsonMap;
   }
 
   Future<Map<String, dynamic>> startTranscription() async {

@@ -183,7 +183,91 @@ class _BackupBody extends ConsumerWidget {
       }
     }
 
-    final infoTiles = [
+    Future<void> triggerStartSsdExport() async {
+      final api = ref.read(apiClientProvider);
+      final offload = status.offload;
+      final target = offload.target ??
+          (offload.availableTargets.isNotEmpty
+              ? offload.availableTargets.first
+              : null);
+      final mountpoint = target?.mountpoint;
+      try {
+        final result = await api.startSsdExport(
+          mountpoint:
+              mountpoint != null && mountpoint.isNotEmpty ? mountpoint : null,
+        );
+        if (context.mounted) {
+          final payload = result['target'];
+          final label = payload is Map<String, dynamic>
+              ? payload['label']?.toString()
+              : target?.label;
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                context.tr(
+                  'backup.toast.export_started',
+                  params: {'target': label ?? 'SSD'},
+                ),
+              ),
+            ),
+          );
+        }
+      } catch (error) {
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                context.tr(
+                  'backup.toast.export_failed',
+                  params: {'error': error.toString()},
+                ),
+              ),
+            ),
+          );
+        }
+      } finally {
+        ref.invalidate(backupStatusProvider);
+      }
+    }
+
+    Future<void> triggerCancelSsdExport() async {
+      final api = ref.read(apiClientProvider);
+      try {
+        await api.cancelSsdExport();
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(context.tr('backup.toast.export_cancelled')),
+            ),
+          );
+        }
+      } catch (error) {
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                context.tr(
+                  'backup.toast.export_failed',
+                  params: {'error': error.toString()},
+                ),
+              ),
+            ),
+          );
+        }
+      } finally {
+        ref.invalidate(backupStatusProvider);
+      }
+    }
+
+    final offload = status.offload;
+    final hasOffloadTarget =
+        offload.availableTargets.isNotEmpty || offload.target != null;
+    final canStartOffload =
+        hasOffloadTarget && !offload.isActive && !status.isActive;
+    final canCancelOffload = offload.canCancel;
+    final offloadInfoValue = _offloadStatusLabel(context, offload);
+
+    final infoTiles = <InfoTile>[
       InfoTile(
         label: context.tr('backup.info.transfer'),
         value: manifestValue,
@@ -205,6 +289,15 @@ class _BackupBody extends ConsumerWidget {
         icon: Icons.speed,
       ),
     ];
+    if (offloadInfoValue != null) {
+      infoTiles.add(
+        InfoTile(
+          label: context.tr('backup.info.offload'),
+          value: offloadInfoValue,
+          icon: Icons.save_alt_rounded,
+        ),
+      );
+    }
     final recoveryCard = _buildRecoveryCard(
       context: context,
       status: status,
@@ -240,6 +333,15 @@ class _BackupBody extends ConsumerWidget {
                 icon: const Icon(Icons.play_arrow_rounded),
                 label: Text(context.tr('backup.actions.start')),
               ),
+              FilledButton.icon(
+                onPressed: canStartOffload
+                    ? () {
+                        triggerStartSsdExport();
+                      }
+                    : null,
+                icon: const Icon(Icons.save_rounded),
+                label: Text(context.tr('backup.actions.export')),
+              ),
               OutlinedButton.icon(
                 onPressed: status.canCancel
                     ? () {
@@ -248,6 +350,15 @@ class _BackupBody extends ConsumerWidget {
                     : null,
                 icon: const Icon(Icons.stop_circle_rounded),
                 label: Text(context.tr('backup.actions.cancel')),
+              ),
+              OutlinedButton.icon(
+                onPressed: canCancelOffload
+                    ? () {
+                        triggerCancelSsdExport();
+                      }
+                    : null,
+                icon: const Icon(Icons.cancel_schedule_send_rounded),
+                label: Text(context.tr('backup.actions.export_cancel')),
               ),
               OutlinedButton.icon(
                 onPressed: status.isActive
@@ -278,8 +389,8 @@ class _BackupBody extends ConsumerWidget {
         SizedBox(height: spacing),
         JournalCard(
           padding: journalPadding,
-          heroBadge:
-              _MissionBadge(text: phase.label.toUpperCase(), color: phase.badgeColor),
+          heroBadge: _MissionBadge(
+              text: phase.label.toUpperCase(), color: phase.badgeColor),
           child: LayoutBuilder(
             builder: (context, constraints) {
               final available = constraints.maxWidth;
@@ -314,9 +425,10 @@ class _BackupBody extends ConsumerWidget {
 
               final proxyIndeterminate =
                   status.proxyJobsTotal <= 0 && status.proxyState == 'running';
-              final transcriptionIndeterminate = status.transcriptionTotal <= 0 &&
-                  (status.transcriptionState == 'processing' ||
-                      status.transcriptionState == 'pending');
+              final transcriptionIndeterminate =
+                  status.transcriptionTotal <= 0 &&
+                      (status.transcriptionState == 'processing' ||
+                          status.transcriptionState == 'pending');
               final gaugeConfigs = <_GaugeDescriptor>[
                 _GaugeDescriptor(
                   label: context.tr('backup.gauge.label'),
@@ -376,6 +488,24 @@ class _BackupBody extends ConsumerWidget {
                 previewValue: previewValue,
                 transcriptionValue: transcriptionValue,
               );
+              final offloadMessage = offload.message?.trim();
+              final combinedDetails = <Widget>[
+                ...detailWidgets,
+                if (offloadMessage != null && offloadMessage.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 12),
+                    child: Text(
+                      context.tr(
+                        'backup.info.offload_message',
+                        params: {'message': offloadMessage},
+                      ),
+                      style: Theme.of(context)
+                          .textTheme
+                          .bodySmall
+                          ?.copyWith(color: AppColors.sage, height: 1.3),
+                    ),
+                  ),
+              ];
 
               if (isTarget && available < compactThreshold) {
                 return Column(
@@ -385,7 +515,7 @@ class _BackupBody extends ConsumerWidget {
                     spacingWidget,
                     infoTileBuilder,
                     const SizedBox(height: 20),
-                    ...detailWidgets,
+                    ...combinedDetails,
                   ],
                 );
               }
@@ -405,7 +535,7 @@ class _BackupBody extends ConsumerWidget {
                     ],
                   ),
                   spacingWidget,
-                  ...detailWidgets,
+                  ...combinedDetails,
                 ],
               );
             },
@@ -419,7 +549,6 @@ class _BackupBody extends ConsumerWidget {
     );
   }
 }
-
 
 List<Widget> _buildStatusDetails(
   BuildContext context,
@@ -436,7 +565,8 @@ List<Widget> _buildStatusDetails(
       decoration: BoxDecoration(
         color: AppColors.charcoalAlt.withOpacity(0.65),
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: phase.badgeColor.withOpacity(0.4), width: 1.2),
+        border:
+            Border.all(color: phase.badgeColor.withOpacity(0.4), width: 1.2),
       ),
       child: Text(
         statusMessage,
@@ -537,8 +667,8 @@ List<Widget> _buildStatusDetails(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(context.tr('backup.errors.heading'),
-                style:
-                    theme.textTheme.titleSmall?.copyWith(color: AppColors.rust)),
+                style: theme.textTheme.titleSmall
+                    ?.copyWith(color: AppColors.rust)),
             const SizedBox(height: 8),
             ...status.errors.map(
               (err) => Padding(
@@ -554,7 +684,6 @@ List<Widget> _buildStatusDetails(
 
   return details;
 }
-
 
 double _clampGaugeValue(double value) {
   if (value.isNaN || value.isInfinite) {
@@ -580,9 +709,8 @@ class _GaugeDescriptor {
 String? _proxyCaption(BuildContext context, BackupStatus status) {
   final params = {
     'done': status.proxyJobsDone.toString(),
-    'total': status.proxyJobsTotal > 0
-        ? status.proxyJobsTotal.toString()
-        : '--',
+    'total':
+        status.proxyJobsTotal > 0 ? status.proxyJobsTotal.toString() : '--',
   };
   return _localizedGaugeState(
     context,
@@ -631,6 +759,36 @@ String? _localizedGaugeState(
 
 String _normalizeState(String state) => state.trim().toLowerCase();
 
+String? _offloadStatusLabel(BuildContext context, OffloadStatus offload) {
+  final phase = offload.phase.trim().toLowerCase();
+  switch (phase) {
+    case 'copying':
+      final percent = offload.progress.isNaN || offload.progress.isInfinite
+          ? 0.0
+          : (offload.progress * 100).clamp(0, 100);
+      return context.tr(
+        'backup.info.offload_copying',
+        params: {'progress': percent.toStringAsFixed(0)},
+      );
+    case 'preparing':
+      return context.tr('backup.info.offload_preparing');
+    case 'cancelling':
+      return context.tr('backup.info.offload_cancelling');
+    case 'cancelled':
+      return context.tr('backup.info.offload_cancelled');
+    case 'done':
+      return context.tr('backup.info.offload_done');
+    case 'error':
+      return context.tr('backup.info.offload_error');
+  }
+  if (offload.isActive) {
+    return context.tr('backup.info.offload_preparing');
+  }
+  if (offload.hasAvailableTarget || offload.target != null) {
+    return context.tr('backup.info.offload_ready');
+  }
+  return context.tr('backup.info.offload_unavailable');
+}
 
 class _StatusChip extends StatelessWidget {
   const _StatusChip({required this.isActive, required this.phase});
@@ -727,8 +885,6 @@ class _DeviceCallout extends StatelessWidget {
   }
 }
 
-
-
 Widget? _buildRecoveryCard({
   required BuildContext context,
   required BackupStatus status,
@@ -822,9 +978,6 @@ String? _recoveryHint(BuildContext context, BackupStatus status) {
   }
   return context.tr('backup.recovery.hint.generic');
 }
-
-
-
 
 class ListLoadingState extends StatelessWidget {
   const ListLoadingState({super.key});

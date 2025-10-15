@@ -43,6 +43,123 @@ double _normalizeProgress(num? explicitValue, int done, int total) {
   return clamped.toDouble();
 }
 
+class OffloadTarget {
+  const OffloadTarget({
+    required this.label,
+    required this.mountpoint,
+    required this.sizeBytes,
+    required this.freeBytes,
+    required this.device,
+  });
+
+  final String label;
+  final String mountpoint;
+  final int sizeBytes;
+  final int? freeBytes;
+  final String? device;
+
+  factory OffloadTarget.fromJson(Map<String, dynamic> json) {
+    return OffloadTarget(
+      label: json['label']?.toString() ?? 'SSD',
+      mountpoint: json['mountpoint']?.toString() ?? '',
+      sizeBytes: (json['size_bytes'] as num?)?.toInt() ?? 0,
+      freeBytes: (json['free_bytes'] as num?)?.toInt(),
+      device: json['device']?.toString(),
+    );
+  }
+}
+
+class OffloadStatus {
+  const OffloadStatus({
+    required this.phase,
+    required this.progress,
+    required this.bytesTotal,
+    required this.bytesCopied,
+    required this.filesTotal,
+    required this.filesCopied,
+    required this.eta,
+    required this.speed,
+    required this.message,
+    required this.errors,
+    required this.target,
+    required this.availableTargets,
+    required this.tripName,
+    required this.currentPath,
+    required this.canCancel,
+  });
+
+  final String phase;
+  final double progress;
+  final int bytesTotal;
+  final int bytesCopied;
+  final int filesTotal;
+  final int filesCopied;
+  final String? eta;
+  final String? speed;
+  final String? message;
+  final List<String> errors;
+  final OffloadTarget? target;
+  final List<OffloadTarget> availableTargets;
+  final String? tripName;
+  final String? currentPath;
+  final bool canCancel;
+
+  bool get isActive =>
+      phase == 'preparing' || phase == 'copying' || phase == 'cancelling';
+
+  bool get hasAvailableTarget => availableTargets.isNotEmpty;
+
+  factory OffloadStatus.fromJson(Map<String, dynamic> json) {
+    final errors = (json['errors'] as List<dynamic>? ?? [])
+        .map((entry) => entry.toString())
+        .where((entry) => entry.isNotEmpty)
+        .toList(growable: false);
+    final availableTargets = (json['available_targets'] as List<dynamic>? ?? [])
+        .whereType<Map<String, dynamic>>()
+        .map(OffloadTarget.fromJson)
+        .toList(growable: false);
+    final targetJson = json['target'];
+    final offloadTarget = targetJson is Map<String, dynamic>
+        ? OffloadTarget.fromJson(targetJson)
+        : null;
+    return OffloadStatus(
+      phase: json['phase']?.toString().toLowerCase() ?? 'idle',
+      progress: (json['progress'] as num?)?.toDouble() ?? 0.0,
+      bytesTotal: (json['bytes_total'] as num?)?.toInt() ?? 0,
+      bytesCopied: (json['bytes_copied'] as num?)?.toInt() ?? 0,
+      filesTotal: (json['files_total'] as num?)?.toInt() ?? 0,
+      filesCopied: (json['files_copied'] as num?)?.toInt() ?? 0,
+      eta: json['eta']?.toString(),
+      speed: json['speed']?.toString(),
+      message: json['message']?.toString(),
+      errors: errors,
+      target: offloadTarget,
+      availableTargets: availableTargets,
+      tripName: json['trip_name']?.toString(),
+      currentPath: json['current_path']?.toString(),
+      canCancel: json['can_cancel'] as bool? ?? false,
+    );
+  }
+
+  static const empty = OffloadStatus(
+    phase: 'idle',
+    progress: 0.0,
+    bytesTotal: 0,
+    bytesCopied: 0,
+    filesTotal: 0,
+    filesCopied: 0,
+    eta: null,
+    speed: null,
+    message: null,
+    errors: <String>[],
+    target: null,
+    availableTargets: <OffloadTarget>[],
+    tripName: null,
+    currentPath: null,
+    canCancel: false,
+  );
+}
+
 class BackupStatus {
   const BackupStatus({
     required this.phase,
@@ -74,6 +191,7 @@ class BackupStatus {
     required this.transcriptionProgress,
     required this.transcriptionState,
     required this.transcriptionUpdatedAt,
+    required this.offload,
   });
 
   final BackupPhase phase;
@@ -105,6 +223,7 @@ class BackupStatus {
   final double transcriptionProgress;
   final String transcriptionState;
   final DateTime? transcriptionUpdatedAt;
+  final OffloadStatus offload;
 
   bool get isActive {
     switch (phase) {
@@ -157,10 +276,15 @@ class BackupStatus {
       transcriptionTotal,
     );
     final transcriptionState =
-        (json['transcription_state']?.toString() ?? 'idle').trim().toLowerCase();
+        (json['transcription_state']?.toString() ?? 'idle')
+            .trim()
+            .toLowerCase();
     final transcriptionUpdatedAt = DateTime.tryParse(
       json['transcription_updated_at']?.toString() ?? '',
     );
+    final offload = json['offload'] is Map<String, dynamic>
+        ? OffloadStatus.fromJson(json['offload'] as Map<String, dynamic>)
+        : OffloadStatus.empty;
 
     return BackupStatus(
       phase: phase,
@@ -193,6 +317,7 @@ class BackupStatus {
       transcriptionProgress: transcriptionProgress,
       transcriptionState: transcriptionState,
       transcriptionUpdatedAt: transcriptionUpdatedAt,
+      offload: offload,
     );
   }
 
@@ -226,5 +351,6 @@ class BackupStatus {
     transcriptionProgress: 0,
     transcriptionState: 'idle',
     transcriptionUpdatedAt: null,
+    offload: OffloadStatus.empty,
   );
 }

@@ -11,6 +11,7 @@ import tempfile
 import threading
 import time
 import uuid
+import psutil
 from concurrent.futures import ThreadPoolExecutor
 from ..config import load_config, save_config
 from ..paths import Paths
@@ -22,7 +23,7 @@ from ..proxies.generate import generate_for_folder
 from ..transcription import TranscriptionQueue
 from ..stats import collect_trip_media_stats
 from ..backup.scanner import find_source_mounts
-from ..hardware.usb import ensure_usb_mounted
+from ..hardware.usb import ensure_usb_mounted, usb_partitions
 from ..health import collect_health
 from ..ap_mode import start_ap, stop_ap, get_ap_address
 
@@ -39,6 +40,7 @@ def create_app() -> Flask:
     proxy_executor = ThreadPoolExecutor(max_workers=1)
     proxy_lock = threading.Lock()
     trip_root = paths.trip_root().resolve()
+    proxies_root = paths.proxies_dir().resolve()
     incoming_root = trip_root / '.incoming'
     incoming_root.mkdir(parents=True, exist_ok=True)
     trash_root = paths.trash_dir().resolve()
@@ -66,9 +68,160 @@ def create_app() -> Flask:
         'current_file': None,
     }
     backup_thread = None
+    SSD_MIN_SIZE_BYTES = 512 * 1_000_000_000
+    COPY_CHUNK_SIZE = 4 * 1024 * 1024
+
+    offload_lock = threading.Lock()
+    offload_state: dict[str, object] = {
+        'phase': 'idle',
+        'progress': 0.0,
+        'bytes_total': 0,
+        'bytes_copied': 0,
+        'files_total': 0,
+        'files_copied': 0,
+        'eta': None,
+        'speed': None,
+        'message': None,
+        'errors': [],
+        'target': None,
+        'trip_name': trip_root.name,
+        'current_path': None,
+        'can_cancel': False,
+        'updated_at': dt.datetime.utcnow().replace(tzinfo=dt.timezone.utc).isoformat(),
+    }
+    offload_thread = None
+    offload_cancel_event = threading.Event()
 
     def _now_iso() -> str:
         return dt.datetime.utcnow().replace(tzinfo=dt.timezone.utc).isoformat()
+
+    def _format_eta(seconds: float | None) -> str | None:
+        if seconds is None or seconds <= 0:
+            return None
+        minutes, sec = divmod(int(seconds + 0.5), 60)
+        hours, minutes = divmod(minutes, 60)
+        if hours > 0:
+            return f"{hours}h {minutes:02}m"
+        if minutes > 0:
+            return f"{minutes}m {sec:02}s"
+        return f"{sec}s"
+
+    def _format_speed(bytes_per_second: float) -> str | None:
+        if bytes_per_second <= 0:
+            return None
+        units = ['B/s', 'KB/s', 'MB/s', 'GB/s', 'TB/s']
+        value = float(bytes_per_second)
+        unit = units[0]
+        for candidate in units[1:]:
+            if value >= 1024:
+                value /= 1024
+                unit = candidate
+            else:
+                break
+        precision = 1 if value < 100 else 0
+        return f"{value:.{precision}f} {unit}"
+
+    def _set_offload_state(**updates) -> None:
+        errors = updates.pop('errors', None)
+        with offload_lock:
+            if errors is not None:
+                offload_state['errors'] = list(errors)
+            for key, value in updates.items():
+                if key == 'target' and value is not None:
+                    offload_state[key] = dict(value)
+                else:
+                    offload_state[key] = value
+            offload_state['updated_at'] = _now_iso()
+
+    def _detect_large_drive_targets(min_size_bytes: int = SSD_MIN_SIZE_BYTES) -> list[dict[str, object]]:
+        try:
+            ensure_usb_mounted(readonly=False)
+        except Exception:
+            pass
+        partitions = usb_partitions()
+        try:
+            nvme_resolved = paths.nvme_mount.resolve()
+        except Exception:
+            nvme_resolved = paths.nvme_mount
+        targets: list[dict[str, object]] = []
+        for part in partitions:
+            mountpoint = part.get('mountpoint')
+            if not mountpoint:
+                continue
+            try:
+                size_bytes = int(part.get('size_bytes') or 0)
+            except (TypeError, ValueError):
+                size_bytes = 0
+            if size_bytes < min_size_bytes:
+                continue
+            try:
+                mp = Path(mountpoint)
+            except Exception:
+                continue
+            try:
+                if mp.exists() and nvme_resolved and mp.resolve() == nvme_resolved:
+                    continue
+            except Exception:
+                pass
+            label_raw = part.get('label') or ''
+            label = label_raw.strip() or mp.name or str(part.get('name') or '').replace('/dev/', '')
+            try:
+                usage = psutil.disk_usage(str(mp))
+                free_bytes = usage.free
+            except Exception:
+                free_bytes = None
+            targets.append({
+                'label': label,
+                'mountpoint': str(mp),
+                'size_bytes': size_bytes,
+                'free_bytes': free_bytes,
+                'device': part.get('name'),
+            })
+        targets.sort(key=lambda entry: (entry.get('label') or '').lower())
+        return targets
+
+    def _get_offload_state() -> dict:
+        available = _detect_large_drive_targets()
+        with offload_lock:
+            data = dict(offload_state)
+            data['errors'] = list(offload_state.get('errors') or [])
+        data['available_targets'] = available
+        return data
+
+    def _list_trip_files() -> list[tuple[Path, Path, int]]:
+        entries: list[tuple[Path, Path, int]] = []
+        for dirpath, _, filenames in os.walk(trip_root):
+            for fn in filenames:
+                src = Path(dirpath) / fn
+                try:
+                    rel = src.relative_to(trip_root)
+                except ValueError:
+                    continue
+                try:
+                    size = src.stat().st_size
+                except (FileNotFoundError, OSError):
+                    continue
+                entries.append((src, rel, size))
+        return entries
+
+    def _list_trip_proxies() -> list[tuple[Path, Path, int]]:
+        entries: list[tuple[Path, Path, int]] = []
+        if not proxies_root.exists():
+            return entries
+        prefix = trip_root.resolve().as_posix().lstrip('/').replace('/', '_')
+        for proxy_path in proxies_root.glob('*'):
+            if not proxy_path.is_file():
+                continue
+            name = proxy_path.name
+            if not (name.startswith(prefix) or name == prefix):
+                continue
+            try:
+                size = proxy_path.stat().st_size
+            except (FileNotFoundError, OSError):
+                continue
+            rel = proxy_path.relative_to(proxies_root)
+            entries.append((proxy_path, rel, size))
+        return entries
 
     def _set_backup_state(**updates) -> None:
         errors = updates.pop('errors', None)
@@ -173,6 +326,7 @@ def create_app() -> Flask:
             'transcription_state': transcription_state,
             'transcription_updated_at': _now_iso(),
         })
+        data['offload'] = _get_offload_state()
 
         return data
 
@@ -1071,6 +1225,271 @@ def create_app() -> Flask:
         if state.get('phase') not in {'preparing', 'copying', 'verifying', 'cancelling'}:
             return jsonify({'status': 'idle'})
         return jsonify({'status': 'not_supported'})
+
+    @app.post('/api/backup/export/start')
+    def api_backup_export_start():
+        nonlocal offload_thread
+
+        with offload_lock:
+            existing = offload_thread
+            if existing and existing.is_alive():
+                return jsonify({'status': 'running', 'state': _get_offload_state()}), 409
+
+        with backup_lock:
+            backup_active = (
+                (backup_thread and backup_thread.is_alive())
+                or str(backup_state.get('phase') or '').lower() in {'preparing', 'copying', 'verifying', 'cancelling'}
+            )
+        if backup_active:
+            return jsonify({'status': 'busy', 'reason': 'backup_active'}), 409
+
+        payload = request.get_json(silent=True) or {}
+        requested_mount = (payload.get('mountpoint') or '').strip()
+        targets = _detect_large_drive_targets()
+        target = None
+        if requested_mount:
+            target = next((t for t in targets if t.get('mountpoint') == requested_mount), None)
+        if target is None and targets:
+            target = targets[0]
+        if target is None:
+            _set_offload_state(
+                phase='idle',
+                message='No large drive detected',
+                target=None,
+                can_cancel=False,
+            )
+            return jsonify({'status': 'error', 'reason': 'no_target'}), 400
+        target = dict(target)
+
+        trip_files = _list_trip_files()
+        proxy_files = _list_trip_proxies()
+        total_files = len(trip_files) + len(proxy_files)
+        total_bytes = sum(entry[2] for entry in trip_files) + sum(entry[2] for entry in proxy_files)
+
+        if total_files <= 0 or total_bytes <= 0:
+            _set_offload_state(
+                phase='error',
+                message='Trip folder is empty',
+                errors=['No files to export'],
+                target=target,
+                can_cancel=False,
+            )
+            return jsonify({'status': 'error', 'reason': 'empty_trip'}), 400
+
+        try:
+            usage = psutil.disk_usage(target['mountpoint'])
+            free_bytes = usage.free
+        except Exception:
+            free_bytes = None
+        if free_bytes is not None:
+            target['free_bytes'] = free_bytes
+        if free_bytes is not None and free_bytes < total_bytes:
+            _set_offload_state(
+                phase='error',
+                message='Not enough space on target',
+                errors=[f'Need {total_bytes} bytes, have {free_bytes}'],
+                target=target,
+                can_cancel=False,
+            )
+            return jsonify({
+                'status': 'error',
+                'reason': 'insufficient_space',
+                'required_bytes': total_bytes,
+                'free_bytes': free_bytes,
+            }), 409
+
+        _set_offload_state(
+            phase='preparing',
+            progress=0.0,
+            bytes_total=total_bytes,
+            files_total=total_files,
+            bytes_copied=0,
+            files_copied=0,
+            eta=None,
+            speed=None,
+            message=f"Preparing export to {target['label']}",
+            errors=[],
+            target=target,
+            current_path=None,
+            can_cancel=True,
+        )
+        offload_cancel_event.clear()
+
+        trip_files_seq = [(src, rel, size) for src, rel, size in trip_files]
+        proxy_files_seq = [(src, rel, size) for src, rel, size in proxy_files]
+
+        def _offload_worker():
+            nonlocal offload_thread
+
+            start_time = time.monotonic()
+            bytes_copied = 0
+            files_copied = 0
+
+            export_base = Path(target['mountpoint']) / 'Blackbox'
+            trip_dest_root = export_base / 'trips' / trip_root.name
+            proxies_dest_root = export_base / 'proxies'
+
+            class ExportCancelled(Exception):
+                pass
+
+            def _iter_items():
+                for src, rel, size in trip_files_seq:
+                    yield 'trip', src, rel, size
+                for src, rel, size in proxy_files_seq:
+                    yield 'proxy', src, rel, size
+
+            try:
+                export_base.mkdir(parents=True, exist_ok=True)
+                trip_dest_root.mkdir(parents=True, exist_ok=True)
+                if proxy_files_seq:
+                    proxies_dest_root.mkdir(parents=True, exist_ok=True)
+            except Exception as exc:
+                _set_offload_state(
+                    phase='error',
+                    message=f'Failed to prepare destination: {exc}',
+                    errors=[str(exc)],
+                    can_cancel=False,
+                )
+                with offload_lock:
+                    offload_thread = None
+                return
+
+            def _update(current_rel: str | None = None):
+                fraction = (bytes_copied / total_bytes) if total_bytes > 0 else 0.0
+                elapsed = max(time.monotonic() - start_time, 0.001)
+                speed_val = bytes_copied / elapsed if bytes_copied > 0 else 0.0
+                eta_seconds = ((total_bytes - bytes_copied) / speed_val) if speed_val > 0 else None
+                _set_offload_state(
+                    phase='copying',
+                    progress=fraction,
+                    bytes_copied=bytes_copied,
+                    files_copied=files_copied,
+                    eta=_format_eta(eta_seconds),
+                    speed=_format_speed(speed_val),
+                    current_path=current_rel,
+                    message=f"Copying to {target['label']} ({files_copied}/{total_files})",
+                    can_cancel=not offload_cancel_event.is_set(),
+                )
+
+            try:
+                for kind, src, rel, _size in _iter_items():
+                    if kind == 'trip':
+                        dest = trip_dest_root / rel
+                        display_rel = rel.as_posix()
+                    else:
+                        dest = proxies_dest_root / rel
+                        display_rel = f"proxies/{rel.as_posix()}"
+
+                    dest.parent.mkdir(parents=True, exist_ok=True)
+                    file_bytes_written = 0
+                    _update(display_rel)
+                    try:
+                        with src.open('rb') as fsrc, dest.open('wb') as fdst:
+                            while True:
+                                if offload_cancel_event.is_set():
+                                    raise ExportCancelled()
+                                chunk = fsrc.read(COPY_CHUNK_SIZE)
+                                if not chunk:
+                                    break
+                                fdst.write(chunk)
+                                written = len(chunk)
+                                file_bytes_written += written
+                                bytes_copied += written
+                                _update(display_rel)
+                            fdst.flush()
+                            try:
+                                os.fsync(fdst.fileno())
+                            except OSError:
+                                pass
+                        shutil.copystat(src, dest, follow_symlinks=True)
+                        files_copied += 1
+                        _update(display_rel)
+                    except ExportCancelled:
+                        bytes_copied = max(0, bytes_copied - file_bytes_written)
+                        try:
+                            if dest.exists():
+                                dest.unlink()
+                        except Exception:
+                            pass
+                        raise
+                    except Exception as exc:
+                        bytes_copied = max(0, bytes_copied - file_bytes_written)
+                        try:
+                            if dest.exists():
+                                dest.unlink()
+                        except Exception:
+                            pass
+                        raise
+
+                final_elapsed = max(time.monotonic() - start_time, 0.001)
+                final_speed = bytes_copied / final_elapsed if bytes_copied > 0 else 0.0
+                _set_offload_state(
+                    phase='done',
+                    progress=1.0,
+                    bytes_copied=bytes_copied,
+                    files_copied=files_copied,
+                    eta=None,
+                    speed=_format_speed(final_speed),
+                    current_path=None,
+                    message=f"Export complete to {target['label']}",
+                    can_cancel=False,
+                )
+            except ExportCancelled:
+                _set_offload_state(
+                    phase='cancelled',
+                    progress=(bytes_copied / total_bytes) if total_bytes > 0 else 0.0,
+                    bytes_copied=bytes_copied,
+                    files_copied=files_copied,
+                    eta=None,
+                    speed=None,
+                    current_path=None,
+                    message='Export cancelled',
+                    can_cancel=False,
+                )
+            except Exception as exc:
+                _set_offload_state(
+                    phase='error',
+                    progress=(bytes_copied / total_bytes) if total_bytes > 0 else 0.0,
+                    bytes_copied=bytes_copied,
+                    files_copied=files_copied,
+                    eta=None,
+                    speed=None,
+                    current_path=None,
+                    message=f'Export failed: {exc}',
+                    errors=[str(exc)],
+                    can_cancel=False,
+                )
+            finally:
+                with offload_lock:
+                    offload_thread = None
+                offload_cancel_event.clear()
+
+        thread = threading.Thread(target=_offload_worker, name='offload-worker', daemon=True)
+        with offload_lock:
+            offload_thread = thread
+        thread.start()
+        return jsonify({
+            'status': 'started',
+            'target': target,
+            'totals': {'bytes': total_bytes, 'files': total_files},
+        })
+
+    @app.post('/api/backup/export/cancel')
+    def api_backup_export_cancel():
+        with offload_lock:
+            thread = offload_thread
+            phase = str(offload_state.get('phase') or '').lower()
+            if not thread or not thread.is_alive():
+                return jsonify({'status': 'idle', 'state': _get_offload_state()})
+            if phase in {'cancelling'}:
+                return jsonify({'status': 'cancelling'})
+        offload_cancel_event.set()
+        _set_offload_state(
+            phase='cancelling',
+            message='Cancelling export...',
+            can_cancel=False,
+        )
+        return jsonify({'status': 'cancelling'})
 
     @app.post('/api/transcription/start')
     def api_transcription_start():
