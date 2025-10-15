@@ -27,6 +27,7 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> {
   bool _initializing = true;
   bool _isPlaying = false;
   bool _controlsVisible = true;
+  bool _isMuted = true; // Start muted to prevent audio errors
   Duration _position = Duration.zero;
   Duration _duration = Duration.zero;
   Duration? _scrubOverride;
@@ -58,7 +59,16 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> {
       });
 
       // Initialize video player controller
-      _controller = VideoPlayerController.networkUrl(videoUri);
+      _controller = VideoPlayerController.networkUrl(
+        videoUri,
+        videoPlayerOptions: VideoPlayerOptions(
+          mixWithOthers: true, // Allow playback even without audio device
+          allowBackgroundPlayback: false,
+        ),
+      );
+      
+      // Set volume to 0 initially to prevent audio errors on devices without speakers
+      await _controller.setVolume(0.0);
 
       // Add listeners
       _controller.addListener(_onVideoPlayerUpdate);
@@ -142,6 +152,14 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> {
       _controller.play();
       _startControlsHideTimer();
     }
+    _showControls();
+  }
+
+  void _toggleMute() {
+    setState(() {
+      _isMuted = !_isMuted;
+    });
+    _controller.setVolume(_isMuted ? 0.0 : 1.0);
     _showControls();
   }
 
@@ -273,10 +291,9 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> {
     if (nextIndex != null) {
       final current = _subtitleEntries[nextIndex];
       if (position >= current.start && position <= current.end) {
-        // Already in the right segment, ensure subtitle is set if it wasn't before
-        if (nextIndex != _activeSubtitleIndex || _activeSubtitle != current.text) {
+        // Already in the right segment, but ensure subtitle is visible
+        if (_activeSubtitle != current.text) {
           setState(() {
-            _activeSubtitleIndex = nextIndex;
             _activeSubtitle = current.text;
           });
         }
@@ -659,28 +676,41 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> {
             ),
             SizedBox(height: isCompact ? 8 : 12),
             Row(
-              mainAxisAlignment: MainAxisAlignment.center,
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 _buildPlaybackButton(
-                  icon: Icons.replay_10,
-                  tooltip: 'Rewind 10 seconds',
-                  onPressed: () => _seekBySeconds(-10),
-                  size: isCompact ? 32 : 36,
+                  icon: _isMuted ? Icons.volume_off : Icons.volume_up,
+                  tooltip: _isMuted ? 'Unmute' : 'Mute',
+                  onPressed: _toggleMute,
+                  size: isCompact ? 28 : 32,
                 ),
-                SizedBox(width: isCompact ? 24 : 32),
-                _buildPlaybackButton(
-                  icon: _isPlaying ? Icons.pause_circle : Icons.play_circle,
-                  tooltip: _isPlaying ? 'Pause' : 'Play',
-                  onPressed: _togglePlayback,
-                  size: isCompact ? 54 : 64,
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    _buildPlaybackButton(
+                      icon: Icons.replay_10,
+                      tooltip: 'Rewind 10 seconds',
+                      onPressed: () => _seekBySeconds(-10),
+                      size: isCompact ? 32 : 36,
+                    ),
+                    SizedBox(width: isCompact ? 24 : 32),
+                    _buildPlaybackButton(
+                      icon: _isPlaying ? Icons.pause_circle : Icons.play_circle,
+                      tooltip: _isPlaying ? 'Pause' : 'Play',
+                      onPressed: _togglePlayback,
+                      size: isCompact ? 54 : 64,
+                    ),
+                    SizedBox(width: isCompact ? 24 : 32),
+                    _buildPlaybackButton(
+                      icon: Icons.forward_10,
+                      tooltip: 'Forward 10 seconds',
+                      onPressed: () => _seekBySeconds(10),
+                      size: isCompact ? 32 : 36,
+                    ),
+                  ],
                 ),
-                SizedBox(width: isCompact ? 24 : 32),
-                _buildPlaybackButton(
-                  icon: Icons.forward_10,
-                  tooltip: 'Forward 10 seconds',
-                  onPressed: () => _seekBySeconds(10),
-                  size: isCompact ? 32 : 36,
-                ),
+                // Empty spacer for symmetry
+                SizedBox(width: isCompact ? 28 : 32),
               ],
             ),
           ],

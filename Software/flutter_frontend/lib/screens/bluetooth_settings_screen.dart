@@ -119,10 +119,10 @@ class _BluetoothSettingsScreenState extends State<BluetoothSettingsScreen> {
       setState(() => _isDiscovering = false);
       _showSnack(result.error!);
     } else {
-      _showSnack('Searching for nearby devices…');
+      _showSnack('Searching for nearby devices… (60s)');
       
-      // Auto-stop scanning after 30 seconds
-      Timer(const Duration(seconds: 30), () {
+      // Auto-stop scanning after 60 seconds (longer to detect AirPods in pairing mode)
+      Timer(const Duration(seconds: 60), () {
         if (mounted && _isDiscovering) {
           _stopDiscovery();
         }
@@ -225,6 +225,12 @@ class _BluetoothSettingsScreenState extends State<BluetoothSettingsScreen> {
           ],
         ),
         actions: [
+          if (_isEnabled && !_isDiscovering)
+            IconButton(
+              icon: const Icon(Icons.refresh),
+              tooltip: 'Refresh devices',
+              onPressed: _startDiscovery,
+            ),
           Padding(
             padding: const EdgeInsets.only(right: 8),
             child: Row(
