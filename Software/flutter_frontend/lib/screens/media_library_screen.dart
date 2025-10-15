@@ -933,7 +933,7 @@ class _VideoGridCard extends StatelessWidget {
     final indicator = _TranscriptIndicator.fromRecord(record);
 
     return ClipRRect(
-      borderRadius: BorderRadius.circular(20),
+      borderRadius: BorderRadius.circular(8),
       child: Material(
         color: AppColors.charcoalAlt,
         child: Column(
@@ -1001,43 +1001,37 @@ class _VideoGridCard extends StatelessWidget {
               ),
             ),
             Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
+                  _VideoMetaPill(
+                    icon: Icons.schedule_rounded,
+                    label: durationValue,
+                  ),
                   Tooltip(
                     message: tooltipLabel,
-                    child: Align(
-                      alignment: Alignment.center,
-                      child: flag != null
-                          ? Text(
-                              flag,
-                              style: const TextStyle(fontSize: 30),
-                            )
-                          : const Icon(Icons.public,
-                              color: AppColors.sage, size: 26),
-                    ),
+                    child: flag != null
+                        ? Text(
+                            flag,
+                            style: const TextStyle(
+                              fontSize: 22,
+                              fontFamily: 'Noto Color Emoji',
+                            ),
+                          )
+                        : const Icon(Icons.public,
+                            color: AppColors.sage, size: 18),
                   ),
-                  const SizedBox(height: 14),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      _VideoMetaPill(
-                        icon: Icons.schedule_rounded,
-                        label: durationValue,
-                      ),
-                      _VideoMetaPill(
-                        icon: Icons.sd_card_rounded,
-                        label: sizeLabel,
-                      ),
-                    ],
+                  _VideoMetaPill(
+                    icon: Icons.sd_card_rounded,
+                    label: sizeLabel,
                   ),
                 ],
               ),
             ),
             Divider(
-              height: 1,
-              thickness: 1,
+              height: 0.5,
+              thickness: 0.5,
               color: AppColors.charcoal.withOpacity(0.45),
             ),
             InkWell(
@@ -1045,20 +1039,21 @@ class _VideoGridCard extends StatelessWidget {
               splashColor: AppColors.rust.withOpacity(0.2),
               child: Container(
                 padding:
-                    const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                    const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
                 decoration: BoxDecoration(
                   color: AppColors.rust.withOpacity(0.16),
                 ),
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    const Icon(Icons.delete_outline, color: AppColors.rust),
-                    const SizedBox(width: 8),
+                    const Icon(Icons.delete_outline, color: AppColors.rust, size: 18),
+                    const SizedBox(width: 5),
                     Text(
                       context.tr('common.delete'),
-                      style: theme.textTheme.bodyMedium?.copyWith(
+                      style: theme.textTheme.bodySmall?.copyWith(
                         color: AppColors.rust,
                         fontWeight: FontWeight.w600,
+                        fontSize: 12,
                       ),
                     ),
                   ],
@@ -1550,7 +1545,13 @@ class _VideoPlaceholderCard extends StatelessWidget {
                 children: [
                   Align(
                     alignment: Alignment.center,
-                    child: Text(flag, style: const TextStyle(fontSize: 30)),
+                    child: Text(
+                      flag,
+                      style: const TextStyle(
+                        fontSize: 30,
+                        fontFamily: 'Noto Color Emoji',
+                      ),
+                    ),
                   ),
                   const SizedBox(height: 14),
                   Row(
