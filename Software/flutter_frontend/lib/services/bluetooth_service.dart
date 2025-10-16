@@ -1,5 +1,7 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:convert';
+import 'package:http/http.dart' as http;
 
 enum BluetoothDeviceStatus { connected, paired, available, connecting, pairing }
 
@@ -138,7 +140,7 @@ class BluetoothService {
     }
   }
 
-  /// Start scanning for devices
+  /// Start scanning for devices using Python PyBluez API
   Future<BluetoothServiceResult<bool>> startScan() async {
     if (_isScanning) {
       return const BluetoothServiceResult.success(true);
@@ -151,22 +153,44 @@ class BluetoothService {
         return BluetoothServiceResult.failure('Bluetooth is not enabled');
       }
 
-      // Clear old devices from bluetoothctl cache to get fresh scan
-      await Process.run('bluetoothctl', ['remove', '*'], runInShell: true);
-      
-      // Start scanning
-      final result = await Process.run('bluetoothctl', ['scan', 'on'], runInShell: true);
-      if (result.exitCode != 0) {
-        return BluetoothServiceResult.failure('Failed to start Bluetooth scan: ${result.stderr}');
-      }
-
       _isScanning = true;
       
-      // Start discovering devices in background
-      _discoverDevices();
+      // Call Python API to scan for devices
+      final baseUrl = Platform.environment['BLACKBOX_BASE_URL'] ?? 'http://127.0.0.1:5000';
+      final response = await http.get(Uri.parse('$baseUrl/api/bluetooth/scan'))
+          .timeout(const Duration(seconds: 15));
       
-      return const BluetoothServiceResult.success(true);
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        if (data['success'] == true) {
+          final List<dynamic> devicesJson = data['devices'] ?? [];
+          final devices = <BluetoothDevice>[];
+          
+          for (final deviceJson in devicesJson) {
+            devices.add(BluetoothDevice(
+              name: deviceJson['name'] ?? 'Unknown Device',
+              address: deviceJson['address'],
+              status: BluetoothDeviceStatus.available,
+              rssi: deviceJson['rssi'],
+            ));
+          }
+          
+          _devices.clear();
+          _devices.addAll(devices);
+          _devicesController.add(List.from(_devices));
+          
+          _isScanning = false;
+          return const BluetoothServiceResult.success(true);
+        } else {
+          _isScanning = false;
+          return BluetoothServiceResult.failure(data['error'] ?? 'Unknown error');
+        }
+      } else {
+        _isScanning = false;
+        return BluetoothServiceResult.failure('HTTP ${response.statusCode}: ${response.body}');
+      }
     } catch (e) {
+      _isScanning = false;
       return BluetoothServiceResult.failure('Error starting Bluetooth scan: $e');
     }
   }
@@ -175,18 +199,6 @@ class BluetoothService {
   Future<BluetoothServiceResult<bool>> stopScan() async {
     try {
       _isScanning = false;
-      
-      // Kill the scan process if it's running
-      if (_scanProcess != null) {
-        _scanProcess!.kill();
-        _scanProcess = null;
-      }
-      
-      final result = await Process.run('bluetoothctl', ['scan', 'off'], runInShell: true);
-      if (result.exitCode != 0) {
-        return BluetoothServiceResult.failure('Failed to stop Bluetooth scan: ${result.stderr}');
-      }
-
       return const BluetoothServiceResult.success(true);
     } catch (e) {
       return BluetoothServiceResult.failure('Error stopping Bluetooth scan: $e');
@@ -223,39 +235,53 @@ class BluetoothService {
     }
   }
 
-  /// Pair with a device
+  /// Pair with a device using Python API
   Future<BluetoothServiceResult<bool>> pairDevice(String deviceAddress) async {
     try {
-      // First trust the device
-      await Process.run('bluetoothctl', ['trust', deviceAddress], runInShell: true);
+      final baseUrl = Platform.environment['BLACKBOX_BASE_URL'] ?? 'http://127.0.0.1:5000';
+      final response = await http.post(
+        Uri.parse('$baseUrl/api/bluetooth/pair'),
+        headers: {'Content-Type': 'application/json'},
+        body: json.encode({'address': deviceAddress}),
+      ).timeout(const Duration(seconds: 35));
       
-      // Then pair
-      final result = await Process.run('bluetoothctl', ['pair', deviceAddress], runInShell: true);
-      if (result.exitCode != 0) {
-        return BluetoothServiceResult.failure('Failed to pair with device: ${result.stderr}');
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        if (data['success'] == true) {
+          await _updateDeviceStatus(deviceAddress, BluetoothDeviceStatus.paired);
+          return const BluetoothServiceResult.success(true);
+        } else {
+          return BluetoothServiceResult.failure(data['error'] ?? 'Pairing failed');
+        }
+      } else {
+        return BluetoothServiceResult.failure('HTTP ${response.statusCode}');
       }
-
-      // Update device status
-      await _updateDeviceStatus(deviceAddress, BluetoothDeviceStatus.paired);
-      
-      return const BluetoothServiceResult.success(true);
     } catch (e) {
       return BluetoothServiceResult.failure('Error pairing device: $e');
     }
   }
 
-  /// Connect to a paired device
+  /// Connect to a paired device using Python API
   Future<BluetoothServiceResult<bool>> connectDevice(String deviceAddress) async {
     try {
-      final result = await Process.run('bluetoothctl', ['connect', deviceAddress], runInShell: true);
-      if (result.exitCode != 0) {
-        return BluetoothServiceResult.failure('Failed to connect to device: ${result.stderr}');
-      }
-
-      // Update device status
-      await _updateDeviceStatus(deviceAddress, BluetoothDeviceStatus.connected);
+      final baseUrl = Platform.environment['BLACKBOX_BASE_URL'] ?? 'http://127.0.0.1:5000';
+      final response = await http.post(
+        Uri.parse('$baseUrl/api/bluetooth/connect'),
+        headers: {'Content-Type': 'application/json'},
+        body: json.encode({'address': deviceAddress}),
+      ).timeout(const Duration(seconds: 35));
       
-      return const BluetoothServiceResult.success(true);
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        if (data['success'] == true) {
+          await _updateDeviceStatus(deviceAddress, BluetoothDeviceStatus.connected);
+          return const BluetoothServiceResult.success(true);
+        } else {
+          return BluetoothServiceResult.failure(data['error'] ?? 'Connection failed');
+        }
+      } else {
+        return BluetoothServiceResult.failure('HTTP ${response.statusCode}');
+      }
     } catch (e) {
       return BluetoothServiceResult.failure('Error connecting to device: $e');
     }
@@ -420,66 +446,7 @@ class BluetoothService {
     _devicesController.add(List.from(_devices));
   }
 
-  /// Background task to discover devices while scanning
-  Process? _scanProcess;
 
-  void _discoverDevices() async {
-    try {
-      // Start bluetoothctl in interactive mode to monitor scan results
-      _scanProcess = await Process.start('bluetoothctl', ['scan', 'on']);
-      
-      // Listen to stdout for device discoveries
-      _scanProcess!.stdout.transform(systemEncoding.decoder).listen((output) {
-        // Look for device discovery lines
-        // Format: "[NEW] Device AA:BB:CC:DD:EE:FF Device Name"
-        final lines = output.split('\n');
-        for (final line in lines) {
-          final match = RegExp(r'\[(?:NEW|CHG)\] Device ([A-Fa-f0-9:]{17}) (.+)').firstMatch(line);
-          if (match != null) {
-            final address = match.group(1)!;
-            final name = match.group(2)!.trim();
-            
-            // Add or update device
-            final existingIndex = _devices.indexWhere((d) => d.address == address);
-            final device = BluetoothDevice(
-              name: name,
-              address: address,
-              status: BluetoothDeviceStatus.available,
-            );
-            
-            if (existingIndex >= 0) {
-              _devices[existingIndex] = device;
-            } else {
-              _devices.add(device);
-            }
-            
-            _devicesController.add(List.from(_devices));
-          }
-        }
-      });
-      
-      // Also poll for paired/known devices every 5 seconds
-      Timer.periodic(const Duration(seconds: 5), (timer) async {
-        if (!_isScanning) {
-          timer.cancel();
-          return;
-        }
-        
-        final devicesResult = await getDevices();
-        if (devicesResult.isSuccess) {
-          // Merge with existing discovered devices
-          for (final device in devicesResult.data!) {
-            if (!_devices.any((d) => d.address == device.address)) {
-              _devices.add(device);
-            }
-          }
-          _devicesController.add(List.from(_devices));
-        }
-      });
-    } catch (e) {
-      print('Error in _discoverDevices: $e');
-    }
-  }
 
   /// Dispose resources
   void dispose() {
