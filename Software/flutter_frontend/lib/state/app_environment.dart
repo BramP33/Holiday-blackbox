@@ -12,11 +12,11 @@ class AppEnvironment {
   factory AppEnvironment.detect() {
     final baseUrl = const String.fromEnvironment(
       'BLACKBOX_BASE_URL',
-      defaultValue: 'http://127.0.0.1:8080',
+      defaultValue: 'http://127.0.0.1:5000',
     );
     final wsUrl = const String.fromEnvironment(
       'BLACKBOX_WS_URL',
-      defaultValue: 'ws://127.0.0.1:8080/ws/status',
+      defaultValue: 'ws://127.0.0.1:5000/ws/status',
     );
 
     // Allow overriding through platform environment when running in debug/profile.

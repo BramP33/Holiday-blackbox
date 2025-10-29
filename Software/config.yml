@@ -1,8 +1,8 @@
 language: nl
 trip:
   name: My Trip
-  begin_date: 2025-01-01
-  end_date: 2025-12-31
+  begin_date: '2025-10-14'
+  end_date: '2025-10-23'
   places: []
 verify:
   default_mode: fast
@@ -16,36 +16,38 @@ previews:
   enabled: true
   video_height: 480
   video_bitrate: 1200k
+  video_encoder: auto
   max_cache_gb: 50
-  # Use background priority to minimize CPU impact on Flutter UI
-  # true = minimal CPU usage, slower encoding
-  # false = normal CPU usage, faster encoding  
   background_priority: true
 limits:
   min_free_gb: 10
 transcription:
   enabled: true
-  start_time: null  # Allow transcription anytime
-  end_time: null    # Allow transcription anytime
-  poll_seconds: 120  # Check less frequently to reduce CPU usage
+  start_time: null
+  end_time: null
+  poll_seconds: 120
   whisper:
-    model: tiny  # Use smaller model to reduce memory usage
-    language: nl  # Dutch language support
+    model: tiny
+    language: nl
     compute_type: int8
     device: cpu
-    beam_size: 3  # Reduce beam size for faster processing
+    beam_size: 3
     temperature: 0.0
-    vad_filter: false  # Disable VAD - it was filtering out too much audio
+    vad_filter: false
   keywords:
     method: frequency
-    top_k: 8  # Reduce keyword count
+    top_k: 8
+    max_candidates: 256
   semantic:
-    enabled: false  # Disable semantic search to save resources
+    enabled: false
+    model: sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2
+    device: cpu
+    min_similarity: 0.25
 network:
   mode: ap
 web:
   host: 0.0.0.0
-  port: 8080
+  port: 5000
   page_size: 50
   upload_device_label: Uploads
   upload_max_mb: 8192
