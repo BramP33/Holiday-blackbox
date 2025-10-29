@@ -5,6 +5,7 @@ from pathlib import Path
 import datetime as dt
 import io
 import json
+import logging
 import os
 import shutil
 import tempfile
@@ -254,18 +255,25 @@ def create_app() -> Flask:
         return dt_obj.timestamp()
 
     def _kickoff_proxy_generation() -> None:
+        """
+        Start background generation of video proxies and thumbnails.
+        This runs in a separate thread to avoid blocking the main request.
+        """
         cfg_local = load_config()
         previews = (cfg_local.get('previews') or {})
         if not previews.get('enabled', True):
+            logging.info("Proxy generation disabled in config")
             return
         max_cache_bytes = previews.get('max_cache_gb', 50) * 1_000_000_000
         height = previews.get('video_height', 480)
         bitrate = str(previews.get('video_bitrate', '1200k'))
         encoder = str(previews.get('video_encoder', 'auto') or 'auto')
+        background_priority = bool(previews.get('background_priority', True))
 
         def _run():
             with proxy_lock:
                 try:
+                    logging.info("Starting proxy/thumbnail generation for trip folder")
                     generate_for_folder(
                         paths.trip_root(),
                         paths.proxies_dir(),
@@ -274,10 +282,12 @@ def create_app() -> Flask:
                         height=height,
                         bitrate=bitrate,
                         encoder=encoder,
+                        background_priority=background_priority,
                         progress_cb=None,
                     )
-                except Exception:
-                    pass
+                    logging.info("Proxy/thumbnail generation completed successfully")
+                except Exception as exc:
+                    logging.error(f"Proxy/thumbnail generation failed: {exc}", exc_info=True)
 
         proxy_executor.submit(_run)
 
@@ -1292,7 +1302,8 @@ def create_app() -> Flask:
                     min_timestamp=begin_ts,
                     device_label_override=upload_label,
                 )
-            except Exception:
+            except Exception as exc:
+                logging.error(f"Failed to copy uploaded video {name}: {exc}", exc_info=True)
                 copy_res = None
 
             shutil.rmtree(temp_dir, ignore_errors=True)
@@ -1304,6 +1315,23 @@ def create_app() -> Flask:
                 results.append({'filename': name, 'status': 'error', 'reason': copy_res.errors[0]})
                 continue
             if copy_res.copied_files or copy_res.replaced_files:
+                # Update metadata index for newly uploaded videos
+                try:
+                    root = paths.trip_root()
+                    uploaded_files = [p for p in _iter_media(root, VIDEO_EXTS)]
+                    # Sort by modification time to get the most recent files
+                    uploaded_files.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+                    # Update metadata for the most recently added files
+                    recent_count = copy_res.copied_files + copy_res.replaced_files
+                    recent_files = uploaded_files[:recent_count]
+                    if recent_files:
+                        logging.info(f"Updating metadata index for {len(recent_files)} uploaded video(s)")
+                        metadata_index.ensure_for_paths(recent_files)
+                except Exception as exc:
+                    logging.warning(f"Failed to update metadata index after upload: {exc}")
+                
+                # Trigger thumbnail and proxy generation
+                logging.info(f"Video upload successful for {name}, triggering thumbnail generation")
                 _kickoff_proxy_generation()
                 results.append({'filename': name, 'status': 'uploaded'})
                 continue
