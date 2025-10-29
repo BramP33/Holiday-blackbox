@@ -28,6 +28,12 @@ from ..health import collect_health
 from ..ap_mode import start_ap, stop_ap, get_ap_address
 
 def create_app() -> Flask:
+    # Configure logging
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
+    
     cfg = load_config()
     paths = Paths(cfg).ensure()
     app = Flask(__name__)

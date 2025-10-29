@@ -1,1 +1,9 @@
 **/__pycache__/
+
+# Docker development environment (Mac only, not needed on Pi)
+Dockerfile.dev
+docker-compose.dev.yml
+setup-dev-env.sh
+test-thumbnail-generation.sh
+.dockerignore
+dev-data/

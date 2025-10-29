@@ -16,6 +16,7 @@ def _run(cmd: list[str], background_priority: bool = False) -> int:
     import signal
     import psutil
     import time
+    import threading
     
     # Use nice to lower the process priority (higher nice value = lower priority)
     # Normal: nice 10, Background: nice 19 (lowest priority)
@@ -30,6 +31,9 @@ def _run(cmd: list[str], background_priority: bool = False) -> int:
         except:
             pass  # ionice might not be available
     
+    # Signal handlers only work in main thread, so check if we're in main thread
+    is_main_thread = isinstance(threading.current_thread(), threading._MainThread)
+    
     def timeout_handler(signum, frame):
         raise TimeoutError("Process timeout")
     
@@ -37,9 +41,10 @@ def _run(cmd: list[str], background_priority: bool = False) -> int:
     timeout_seconds = 300
     
     try:
-        # Set timeout handler
-        signal.signal(signal.SIGALRM, timeout_handler)
-        signal.alarm(timeout_seconds)
+        # Set timeout handler only if in main thread
+        if is_main_thread:
+            signal.signal(signal.SIGALRM, timeout_handler)
+            signal.alarm(timeout_seconds)
         
         # Start process with additional limits
         process = subprocess.Popen(
@@ -51,8 +56,25 @@ def _run(cmd: list[str], background_priority: bool = False) -> int:
         # Monitor memory usage and kill if excessive
         max_memory_mb = 512  # 512MB limit
         check_interval = 1.0  # Check every second
+        start_time = time.time()
         
         while process.poll() is None:
+            # Manual timeout check for threads (since signal doesn't work)
+            if not is_main_thread and (time.time() - start_time) > timeout_seconds:
+                print("Warning: FFmpeg process timeout, killing...")
+                try:
+                    parent = psutil.Process(process.pid)
+                    parent.kill()
+                    for child in parent.children(recursive=True):
+                        try:
+                            child.kill()
+                        except (psutil.NoSuchProcess, psutil.AccessDenied):
+                            pass
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    pass
+                process.wait()
+                return 1
+            
             try:
                 # Get process and children
                 parent = psutil.Process(process.pid)
@@ -84,8 +106,9 @@ def _run(cmd: list[str], background_priority: bool = False) -> int:
             
             time.sleep(check_interval)
         
-        # Disable alarm
-        signal.alarm(0)
+        # Disable alarm only if we set it
+        if is_main_thread:
+            signal.alarm(0)
         return process.returncode
         
     except TimeoutError:
