@@ -1145,23 +1145,44 @@ def create_app() -> Flask:
     def api_proxies_regenerate():
         """Regenerate thumbnails and proxies for all existing media files."""
         try:
-            # Also update metadata index for all videos
-            logging.info("Starting proxy/thumbnail regeneration and metadata reindex")
-            
+            # Clear existing proxies (but keep .srt files), then update metadata index
+            logging.info("Starting proxy/thumbnail regeneration: clearing proxies (preserving .srt) and reindexing")
+
+            proxies_dir = paths.proxies_dir()
+            deleted = 0
+            try:
+                # walk the proxies directory and remove all files except .srt
+                for p in proxies_dir.rglob('*'):
+                    try:
+                        if not p.is_file():
+                            continue
+                        if p.suffix.lower() == '.srt':
+                            # keep transcript files
+                            continue
+                        p.unlink()
+                        deleted += 1
+                    except Exception as e:
+                        logging.warning(f"Failed to remove proxy file {p}: {e}")
+            except Exception as e:
+                logging.warning(f"Error while clearing proxies directory {proxies_dir}: {e}")
+
+            logging.info(f"Cleared {deleted} proxy files from {proxies_dir} (kept .srt files)")
+
             # First, reindex all videos to update metadata
             root = paths.trip_root()
             video_files = list(_iter_media(root, VIDEO_EXTS))
             if video_files:
                 logging.info(f"Reindexing metadata for {len(video_files)} videos")
                 metadata_index.ensure_for_paths(video_files)
-            
+
             # Then trigger proxy/thumbnail generation
             _kickoff_proxy_generation()
-            
+
             return jsonify({
                 'status': 'started',
-                'message': f'Regenerating thumbnails and metadata for {len(video_files)} videos',
-                'video_count': len(video_files)
+                'message': f'Regenerating thumbnails and metadata for {len(video_files)} videos (cleared {deleted} proxy files)',
+                'video_count': len(video_files),
+                'deleted_proxies': deleted,
             })
         except Exception as exc:
             logging.error(f"Failed to start proxy regeneration: {exc}", exc_info=True)
