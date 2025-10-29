@@ -294,6 +294,15 @@ class _AdvancedSettingsScreenState extends ConsumerState<AdvancedSettingsScreen>
             title: 'Generate previews',
             subtitle: 'Create proxy videos and thumbnails after import',
           ),
+          const SizedBox(height: 16),
+          OutlinedButton.icon(
+            onPressed: () => _regenerateProxies(context),
+            icon: const Icon(Icons.refresh),
+            label: const Text('Regenerate all thumbnails'),
+            style: OutlinedButton.styleFrom(
+              minimumSize: const Size(double.infinity, 48),
+            ),
+          ),
           const SizedBox(height: 12),
           Row(
             children: [
@@ -928,6 +937,55 @@ class _AdvancedSettingsScreenState extends ConsumerState<AdvancedSettingsScreen>
         _saving = false;
       });
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Failed to save settings: $error')));
+    }
+  }
+
+  Future<void> _regenerateProxies(BuildContext context) async {
+    // Show confirmation dialog
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (BuildContext dialogContext) {
+        return AlertDialog(
+          title: const Text('Regenerate Thumbnails'),
+          content: const Text(
+            'This will regenerate thumbnails and update metadata for all videos. '
+            'Existing thumbnails will be replaced. This may take some time.\n\n'
+            'Continue?'
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(dialogContext).pop(true),
+              child: const Text('Regenerate'),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (confirmed != true || !mounted) return;
+
+    try {
+      final api = ref.read(apiClientProvider);
+      final result = await api.regenerateProxies();
+      if (!mounted) return;
+      
+      final message = result['message'] as String? ?? 'Regeneration started';
+      
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('$message. Check backup screen for progress.'),
+          duration: const Duration(seconds: 4),
+        ),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to start regeneration: $error')),
+      );
     }
   }
 

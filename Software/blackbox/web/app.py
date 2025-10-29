@@ -1141,6 +1141,35 @@ def create_app() -> Flask:
             return jsonify({'status': 'deleted', 'path': canonical})
         return jsonify({'status': 'not_found', 'path': canonical}), 404
 
+    @app.post('/api/proxies/regenerate')
+    def api_proxies_regenerate():
+        """Regenerate thumbnails and proxies for all existing media files."""
+        try:
+            # Also update metadata index for all videos
+            logging.info("Starting proxy/thumbnail regeneration and metadata reindex")
+            
+            # First, reindex all videos to update metadata
+            root = paths.trip_root()
+            video_files = list(_iter_media(root, VIDEO_EXTS))
+            if video_files:
+                logging.info(f"Reindexing metadata for {len(video_files)} videos")
+                metadata_index.ensure_for_paths(video_files)
+            
+            # Then trigger proxy/thumbnail generation
+            _kickoff_proxy_generation()
+            
+            return jsonify({
+                'status': 'started',
+                'message': f'Regenerating thumbnails and metadata for {len(video_files)} videos',
+                'video_count': len(video_files)
+            })
+        except Exception as exc:
+            logging.error(f"Failed to start proxy regeneration: {exc}", exc_info=True)
+            return jsonify({
+                'status': 'error',
+                'message': f'Failed to start regeneration: {exc}'
+            }), 500
+
     @app.get('/api/photos')
     def api_photos():
         root = paths.photos_dir()
