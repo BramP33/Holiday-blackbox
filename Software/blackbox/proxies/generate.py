@@ -13,55 +13,68 @@ _FAILED_ENCODERS: set[str] = set()
 def _run(cmd: list[str], background_priority: bool = False) -> int:
     """Run command with configurable priority and resource limits to avoid overwhelming the system."""
     import subprocess
-    import signal
+    import threading
     import psutil
     import time
-    import threading
-    
+    import signal
+
     # Use nice to lower the process priority (higher nice value = lower priority)
     # Normal: nice 10, Background: nice 19 (lowest priority)
     nice_value = '19' if background_priority else '10'
     nice_cmd = ['nice', '-n', nice_value] + cmd
-    
+
     # Add ionice for background processes to reduce I/O impact
     if background_priority:
         try:
             # ionice -c 3 = idle I/O priority
             nice_cmd = ['ionice', '-c', '3'] + nice_cmd
-        except:
+        except Exception:
             pass  # ionice might not be available
-    
-    # Signal handlers only work in main thread, so check if we're in main thread
-    is_main_thread = isinstance(threading.current_thread(), threading._MainThread)
-    
-    def timeout_handler(signum, frame):
-        raise TimeoutError("Process timeout")
-    
+
     # Set a reasonable timeout (5 minutes per file)
     timeout_seconds = 300
-    
+
+    # Determine if we're running in the main thread; signal.signal only works there
+    is_main_thread = isinstance(threading.current_thread(), threading.main_thread())
+
+    def _set_alarm_if_main():
+        try:
+            if is_main_thread:
+                def timeout_handler(signum, frame):
+                    raise TimeoutError("Process timeout")
+                signal.signal(signal.SIGALRM, timeout_handler)
+                signal.alarm(timeout_seconds)
+        except Exception:
+            # ignore if signals are not usable
+            pass
+
+    def _clear_alarm_if_main():
+        try:
+            if is_main_thread:
+                signal.alarm(0)
+        except Exception:
+            pass
+
     try:
-        # Set timeout handler only if in main thread
-        if is_main_thread:
-            signal.signal(signal.SIGALRM, timeout_handler)
-            signal.alarm(timeout_seconds)
-        
         # Start process with additional limits
         process = subprocess.Popen(
             nice_cmd,
             stderr=subprocess.DEVNULL if not os.environ.get('DEBUG_FFMPEG') else None,
             stdout=subprocess.DEVNULL if not os.environ.get('DEBUG_FFMPEG') else None
         )
-        
+
         # Monitor memory usage and kill if excessive
         max_memory_mb = 512  # 512MB limit
         check_interval = 1.0  # Check every second
         start_time = time.time()
-        
+
+        # Set alarm if we can (works only in main thread)
+        _set_alarm_if_main()
+
         while process.poll() is None:
-            # Manual timeout check for threads (since signal doesn't work)
-            if not is_main_thread and (time.time() - start_time) > timeout_seconds:
-                print("Warning: FFmpeg process timeout, killing...")
+            # For non-main threads, do a manual timeout check
+            if (not is_main_thread) and (time.time() - start_time > timeout_seconds):
+                print("Warning: FFmpeg process timeout (thread), killing...")
                 try:
                     parent = psutil.Process(process.pid)
                     parent.kill()
@@ -71,25 +84,25 @@ def _run(cmd: list[str], background_priority: bool = False) -> int:
                         except (psutil.NoSuchProcess, psutil.AccessDenied):
                             pass
                 except (psutil.NoSuchProcess, psutil.AccessDenied):
-                    pass
+                    try:
+                        process.kill()
+                    except Exception:
+                        pass
                 process.wait()
+                _clear_alarm_if_main()
                 return 1
-            
+
             try:
-                # Get process and children
                 parent = psutil.Process(process.pid)
                 children = parent.children(recursive=True)
                 total_memory = parent.memory_info().rss
-                
                 for child in children:
                     try:
                         total_memory += child.memory_info().rss
                     except (psutil.NoSuchProcess, psutil.AccessDenied):
                         pass
-                
-                # Convert to MB
+
                 memory_mb = total_memory / (1024 * 1024)
-                
                 if memory_mb > max_memory_mb:
                     print(f"Warning: FFmpeg process using {memory_mb:.1f}MB, killing...")
                     parent.kill()
@@ -99,33 +112,21 @@ def _run(cmd: list[str], background_priority: bool = False) -> int:
                         except (psutil.NoSuchProcess, psutil.AccessDenied):
                             pass
                     process.wait()
+                    _clear_alarm_if_main()
                     return 1
-                    
             except (psutil.NoSuchProcess, psutil.AccessDenied):
-                break  # Process ended
-            
+                break
+
             time.sleep(check_interval)
-        
-        # Disable alarm only if we set it
-        if is_main_thread:
-            signal.alarm(0)
-        return process.returncode
-        
-    except TimeoutError:
-        print("Warning: FFmpeg process timeout, killing...")
-        try:
-            process.kill()
-            process.wait()
-        except:
-            pass
-        return 1
+
+        _clear_alarm_if_main()
+        return process.returncode if process.returncode is not None else 0
+
     except FileNotFoundError:
         # Fallback if 'nice' command is not available
-        signal.alarm(0)
         return subprocess.call(cmd)
     except Exception as e:
         print(f"Warning: Process execution error: {e}")
-        signal.alarm(0)
         try:
             if 'process' in locals():
                 process.kill()
