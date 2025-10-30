@@ -183,6 +183,56 @@ class _BackupBody extends ConsumerWidget {
       }
     }
 
+    Future<void> _triggerIndexRegenerate(BuildContext context, WidgetRef ref) async {
+      // Confirm with the user
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (BuildContext dialogContext) {
+          return AlertDialog(
+            title: const Text('Index & regenerate proxies'),
+            content: const Text(
+              'This will clear the proxy cache (transcripts will be preserved) and re-index videos before regenerating proxies. This may take a long time. Continue?'
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(dialogContext).pop(false),
+                child: const Text('Cancel'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.of(dialogContext).pop(true),
+                child: const Text('Start'),
+              ),
+            ],
+          );
+        },
+      );
+
+  if (confirmed != true || !context.mounted) return;
+
+      try {
+        final api = ref.read(apiClientProvider);
+        final result = await api.regenerateProxies();
+  if (!context.mounted) return;
+
+        final deleted = result['deleted_proxies'] as int?;
+        final videoCount = result['video_count'] as int?;
+        final message = deleted != null
+            ? 'Deleted $deleted proxy files. Regeneration started for ${videoCount ?? '0'} videos.'
+            : (result['message'] as String? ?? 'Regeneration started');
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(message), duration: const Duration(seconds: 4)),
+        );
+
+        ref.invalidate(backupStatusProvider);
+      } catch (error) {
+  if (!context.mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to start regeneration: $error')),
+        );
+      }
+    }
+
     Future<void> triggerStartSsdExport() async {
       final api = ref.read(apiClientProvider);
       final offload = status.offload;
@@ -375,6 +425,11 @@ class _BackupBody extends ConsumerWidget {
                 },
                 icon: const Icon(Icons.refresh_rounded),
                 label: Text(context.tr('backup.actions.refresh')),
+              ),
+              TextButton.icon(
+                onPressed: () => _triggerIndexRegenerate(context, ref),
+                icon: const Icon(Icons.auto_fix_high_rounded),
+                label: const Text("Index & regenerate proxy's"),
               ),
             ],
           ),

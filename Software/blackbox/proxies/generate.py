@@ -272,9 +272,13 @@ def build_video_proxy(
                 cmd = _video_proxy_cmd(src, dst, height, bitrate, current, background_priority)
                 exit_code = _run(cmd, background_priority)
                 if exit_code == 0:
-                    # Verify output file was created successfully
+                    # Verify output file was created successfully and is valid using ffprobe
                     if dst.exists() and dst.stat().st_size > 0:
-                        return 0
+                        if _validate_proxy(dst):
+                            return 0
+                        else:
+                            print(f"Warning: Encoder {current} produced invalid proxy (ffprobe check failed)")
+                            exit_code = 1
                     else:
                         print(f"Warning: Encoder {current} completed but output file is invalid")
                         exit_code = 1
@@ -317,6 +321,35 @@ def build_video_thumb(src: Path, dst: Path, size: int = 720, background_priority
         '-frames:v', '1', '-qscale:v', '4', str(dst)
     ]
     return _run(cmd, background_priority)
+
+
+def _validate_proxy(path: Path) -> bool:
+    """Run ffprobe to validate that the proxy contains a video stream and has non-zero duration."""
+    try:
+        import json
+        cmd = [
+            'ffprobe', '-v', 'error', '-print_format', 'json',
+            '-show_entries', 'format=duration', '-show_streams', str(path)
+        ]
+        proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+        if proc.returncode != 0:
+            return False
+        data = json.loads(proc.stdout or '{}')
+        # Check duration
+        fmt = data.get('format') or {}
+        duration = fmt.get('duration')
+        try:
+            duration_val = float(duration) if duration is not None else 0.0
+        except Exception:
+            duration_val = 0.0
+        if duration_val <= 0.1:
+            return False
+        # Ensure at least one video stream
+        streams = data.get('streams') or []
+        has_video = any((s.get('codec_type') or '').lower() == 'video' for s in streams)
+        return has_video
+    except Exception:
+        return False
 
 
 def build_photo_thumb(src: Path, dst: Path, size: int = 720) -> int:
