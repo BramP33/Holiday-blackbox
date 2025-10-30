@@ -241,19 +241,20 @@ def build_video_proxy(
         if encoder is not None:
             raw = encoder.strip()
             normalized = raw.lower()
+            # No hardware acceleration: default to software encoder(s)
             if not raw or normalized == 'auto':
-                # Try H.264 hardware first, then H.265 hardware, then CPU
-                preferred.extend(['h264_v4l2m2m', 'hevc_v4l2m2m', 'libx264'])
+                preferred.extend(['libx264'])
             elif normalized in {'cpu', 'software', 'none', 'disabled', 'off'}:
                 preferred.append('libx264')
             elif normalized in {'h265', 'hevc'}:
-                # H.265 specific request
-                preferred.extend(['hevc_v4l2m2m', 'libx265'])
+                # H.265 specific request (software)
+                preferred.extend(['libx265', 'libx264'])
             else:
+                # Allow explicit encoder names, but avoid hardware encoder defaults
                 preferred.append(raw)
         else:
-            # Default: try H.264 hardware, then H.265 hardware, then CPU fallback
-            preferred.extend(['h264_v4l2m2m', 'hevc_v4l2m2m', 'libx264'])
+            # Default: use software H.264 proxy generation only (no hardware accel)
+            preferred.extend(['libx264'])
 
         # Always ensure we have a CPU fallback
         if 'libx264' not in preferred and 'libx265' not in preferred:
