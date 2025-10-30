@@ -478,8 +478,9 @@ class _BackupBody extends ConsumerWidget {
                     .toList(growable: false),
               );
 
-              final proxyIndeterminate =
-                  status.proxyJobsTotal <= 0 && status.proxyState == 'running';
+        final proxyIndeterminate =
+          status.proxyState == 'indeterminate' ||
+          (status.proxyJobsTotal <= 0 && status.proxyState == 'running');
               final transcriptionIndeterminate =
                   status.transcriptionTotal <= 0 &&
                       (status.transcriptionState == 'processing' ||

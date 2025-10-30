@@ -71,6 +71,7 @@ def create_app() -> Flask:
         'previews_done': 0,
         'previews_total': 0,
         'current_file': None,
+        'proxy_indeterminate': False,
     }
     backup_thread = None
 
@@ -102,13 +103,19 @@ def create_app() -> Flask:
             previews_total = int(data.get('previews_total') or 0)
         except (TypeError, ValueError):
             previews_total = 0
+        # If backend has marked proxies as indeterminate, expose that so frontend
+        # can show an indeterminate spinner until we receive the first concrete update.
+        proxy_indeterminate = bool(data.get('proxy_indeterminate'))
+
         proxy_progress = (
             max(min(previews_done / previews_total, 1.0), 0.0)
             if previews_total > 0
             else 0.0
         )
         proxy_state = 'idle'
-        if previews_total > 0:
+        if proxy_indeterminate:
+            proxy_state = 'indeterminate'
+        elif previews_total > 0:
             proxy_state = 'done' if previews_done >= previews_total else 'running'
         else:
             phase = str(data.get('phase') or '').lower()
@@ -280,19 +287,48 @@ def create_app() -> Flask:
             with proxy_lock:
                 try:
                     logging.info("Starting proxy/thumbnail generation for trip folder")
-                    def proxy_progress(done: int, total: int, _path: Path, _kind: str) -> None:
-                        try:
-                            # Update only proxy/preview counters and a human message.
-                            # Do NOT change the overall backup phase/progress here —
-                            # proxy regeneration should not make the main backup
-                            # gauge jump to 95%+ when it's an independent operation.
-                            _set_backup_state(
-                                message=f'Regenerating previews ({done}/{total})' if total else 'Regenerating previews',
-                                previews_done=done,
-                                previews_total=total,
-                            )
-                        except Exception:
-                            pass
+                        # Prepare per-video progress counting: count unique video files
+                        root = paths.trip_root()
+                        video_files = list(_iter_media(root, VIDEO_EXTS))
+                        total_videos = len(video_files)
+                        seen_videos: set[str] = set()
+                        videos_done = 0
+                        first_update = True
+
+                        # Mark proxies as indeterminate until we see the first progress update
+                        _set_backup_state(proxy_indeterminate=True, previews_done=0, previews_total=0, message='Regenerating previews')
+
+                        def proxy_progress(done: int, total: int, _path: Path, _kind: str) -> None:
+                            nonlocal videos_done, first_update
+                            try:
+                                # normalize to relative path when possible
+                                rel = None
+                                try:
+                                    rel = str(Path(_path).relative_to(paths.trip_root()).as_posix())
+                                except Exception:
+                                    try:
+                                        rel = str(_path)
+                                    except Exception:
+                                        rel = None
+                                if rel and rel not in seen_videos:
+                                    seen_videos.add(rel)
+                                    videos_done = len(seen_videos)
+
+                                if first_update:
+                                    first_update = False
+                                    # Clear indeterminate state now that we have a concrete update
+                                    _set_backup_state(proxy_indeterminate=False)
+
+                                fraction = (videos_done / total_videos) if total_videos else 0.0
+                                _set_backup_state(
+                                    phase='verifying',
+                                    progress=0.95 + 0.05 * fraction,
+                                    message=f'Generating previews ({videos_done}/{total_videos})' if total_videos else 'Generating previews',
+                                    previews_done=videos_done,
+                                    previews_total=total_videos,
+                                )
+                            except Exception:
+                                pass
 
                     generate_for_folder(
                         paths.trip_root(),
@@ -1032,15 +1068,46 @@ def create_app() -> Flask:
                     encoder = str(previews_cfg.get('video_encoder', 'auto') or 'auto')
                     background_priority = bool(previews_cfg.get('background_priority', True))
 
+                    # Use per-video progress counting (count unique video files)
+                    root = paths.trip_root()
+                    video_files = list(_iter_media(root, VIDEO_EXTS))
+                    total_videos = len(video_files)
+                    seen_videos: set[str] = set()
+                    videos_done = 0
+                    first_update = True
+
+                    # Mark proxies indeterminate until first progress callback
+                    _set_backup_state(proxy_indeterminate=True, previews_done=0, previews_total=0)
+
                     def proxy_progress(done: int, total: int, _path: Path, _kind: str) -> None:
-                        fraction = done / total if total else 0.0
-                        _set_backup_state(
-                            phase='verifying',
-                            progress=0.95 + 0.05 * fraction,
-                            message=f'Generating previews ({done}/{total})' if total else 'Generating previews',
-                            previews_done=done,
-                            previews_total=total,
-                        )
+                        nonlocal videos_done, first_update
+                        try:
+                            rel = None
+                            try:
+                                rel = str(Path(_path).relative_to(paths.trip_root()).as_posix())
+                            except Exception:
+                                try:
+                                    rel = str(_path)
+                                except Exception:
+                                    rel = None
+                            if rel and rel not in seen_videos:
+                                seen_videos.add(rel)
+                                videos_done = len(seen_videos)
+
+                            if first_update:
+                                first_update = False
+                                _set_backup_state(proxy_indeterminate=False)
+
+                            fraction = (videos_done / total_videos) if total_videos else 0.0
+                            _set_backup_state(
+                                phase='verifying',
+                                progress=0.95 + 0.05 * fraction,
+                                message=f'Generating previews ({videos_done}/{total_videos})' if total_videos else 'Generating previews',
+                                previews_done=videos_done,
+                                previews_total=total_videos,
+                            )
+                        except Exception:
+                            pass
 
                     try:
                         generate_for_folder(
