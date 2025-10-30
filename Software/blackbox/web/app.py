@@ -280,6 +280,20 @@ def create_app() -> Flask:
             with proxy_lock:
                 try:
                     logging.info("Starting proxy/thumbnail generation for trip folder")
+                    def proxy_progress(done: int, total: int, _path: Path, _kind: str) -> None:
+                        try:
+                            fraction = done / total if total else 1.0
+                            # Keep phase consistent with backup flow
+                            _set_backup_state(
+                                phase='verifying',
+                                progress=0.95 + 0.05 * fraction,
+                                message=f'Regenerating previews ({done}/{total})' if total else 'Regenerating previews',
+                                previews_done=done,
+                                previews_total=total,
+                            )
+                        except Exception:
+                            pass
+
                     generate_for_folder(
                         paths.trip_root(),
                         paths.proxies_dir(),
@@ -289,7 +303,7 @@ def create_app() -> Flask:
                         bitrate=bitrate,
                         encoder=encoder,
                         background_priority=background_priority,
-                        progress_cb=None,
+                        progress_cb=proxy_progress,
                     )
                     logging.info("Proxy/thumbnail generation completed successfully")
                 except Exception as exc:
