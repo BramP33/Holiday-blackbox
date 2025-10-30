@@ -282,11 +282,11 @@ def create_app() -> Flask:
                     logging.info("Starting proxy/thumbnail generation for trip folder")
                     def proxy_progress(done: int, total: int, _path: Path, _kind: str) -> None:
                         try:
-                            fraction = done / total if total else 0.0
-                            # Keep phase consistent with backup flow
+                            # Update only proxy/preview counters and a human message.
+                            # Do NOT change the overall backup phase/progress here —
+                            # proxy regeneration should not make the main backup
+                            # gauge jump to 95%+ when it's an independent operation.
                             _set_backup_state(
-                                phase='verifying',
-                                progress=0.95 + 0.05 * fraction,
                                 message=f'Regenerating previews ({done}/{total})' if total else 'Regenerating previews',
                                 previews_done=done,
                                 previews_total=total,
