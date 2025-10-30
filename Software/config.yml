@@ -23,8 +23,8 @@ limits:
   min_free_gb: 10
 transcription:
   enabled: true
-  start_time: null
-  end_time: null
+  start_time: 09:00
+  end_time: '23:00'
   poll_seconds: 120
   whisper:
     model: tiny
@@ -33,7 +33,7 @@ transcription:
     device: cpu
     beam_size: 3
     temperature: 0.0
-    vad_filter: false
+    vad_filter: true
   keywords:
     method: frequency
     top_k: 8

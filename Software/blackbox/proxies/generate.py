@@ -36,7 +36,8 @@ def _run(cmd: list[str], background_priority: bool = False) -> int:
     timeout_seconds = 300
 
     # Determine if we're running in the main thread; signal.signal only works there
-    is_main_thread = isinstance(threading.current_thread(), threading.main_thread())
+    # threading.main_thread() returns the main Thread object, so compare identity
+    is_main_thread = threading.current_thread() is threading.main_thread()
 
     def _set_alarm_if_main():
         try:

@@ -7,3 +7,13 @@ setup-dev-env.sh
 test-thumbnail-generation.sh
 .dockerignore
 dev-data/
+
+# Ignore runtime output (screenshots, frames)
+Software/run_output/
+
+# Ignore compiled python files
+*.pyc
+
+# Ignore Flutter build artifacts
+/Software/flutter_frontend/build/
+
