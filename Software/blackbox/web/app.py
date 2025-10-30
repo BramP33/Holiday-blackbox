@@ -282,7 +282,7 @@ def create_app() -> Flask:
                     logging.info("Starting proxy/thumbnail generation for trip folder")
                     def proxy_progress(done: int, total: int, _path: Path, _kind: str) -> None:
                         try:
-                            fraction = done / total if total else 1.0
+                            fraction = done / total if total else 0.0
                             # Keep phase consistent with backup flow
                             _set_backup_state(
                                 phase='verifying',
@@ -1033,7 +1033,7 @@ def create_app() -> Flask:
                     background_priority = bool(previews_cfg.get('background_priority', True))
 
                     def proxy_progress(done: int, total: int, _path: Path, _kind: str) -> None:
-                        fraction = done / total if total else 1.0
+                        fraction = done / total if total else 0.0
                         _set_backup_state(
                             phase='verifying',
                             progress=0.95 + 0.05 * fraction,

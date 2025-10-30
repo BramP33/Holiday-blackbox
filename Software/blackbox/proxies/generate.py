@@ -2,6 +2,7 @@ from __future__ import annotations
 from pathlib import Path
 import subprocess
 import os
+import logging
 from typing import Callable, Optional
 
 VIDEO_EXTS = {'.mp4', '.mov', '.m4v'}
@@ -394,6 +395,8 @@ def generate_for_folder(
     """
     cache_dir.mkdir(parents=True, exist_ok=True)
 
+    logging.info(f"Scanning for media under {folder} for proxy generation")
+
     # Build task list first to know total
     tasks: list[tuple[str, Path, Path]] = []  # (kind, src, dst)
     for dirpath, _, files in os.walk(folder):
@@ -413,6 +416,9 @@ def generate_for_folder(
                     tasks.append(('photo', p, thumb))
 
     total = len(tasks)
+    logging.info(f"Found {total} proxy/thumb generation tasks (cache_dir={cache_dir})")
+    if total > 0:
+        logging.info("First tasks: %s", [str(t[1]) for t in tasks[:5]])
     done = 0
     if progress_cb:
         try:
