@@ -280,7 +280,6 @@ def create_app() -> Flask:
         max_cache_bytes = previews.get('max_cache_gb', 50) * 1_000_000_000
         height = previews.get('video_height', 480)
         bitrate = str(previews.get('video_bitrate', '1200k'))
-        encoder = str(previews.get('video_encoder', 'auto') or 'auto')
         background_priority = bool(previews.get('background_priority', True))
 
         def _run():
@@ -337,10 +336,8 @@ def create_app() -> Flask:
                         paths.trip_root(),
                         paths.proxies_dir(),
                         max_cache_bytes,
-                        prefer_gopro_thm=True,
                         height=height,
                         bitrate=bitrate,
-                        encoder=encoder,
                         background_priority=background_priority,
                         progress_cb=proxy_progress,
                     )
@@ -1068,7 +1065,6 @@ def create_app() -> Flask:
                     max_cache_bytes = previews_cfg.get('max_cache_gb', 50) * 1_000_000_000
                     height = previews_cfg.get('video_height', 480)
                     bitrate = str(previews_cfg.get('video_bitrate', '1200k'))
-                    encoder = str(previews_cfg.get('video_encoder', 'auto') or 'auto')
                     background_priority = bool(previews_cfg.get('background_priority', True))
 
                     # Use per-video progress counting (count unique video files)
@@ -1117,10 +1113,8 @@ def create_app() -> Flask:
                             paths.trip_root(),
                             paths.proxies_dir(),
                             max_cache_bytes,
-                            prefer_gopro_thm=True,
                             height=height,
                             bitrate=bitrate,
-                            encoder=encoder,
                             background_priority=background_priority,
                             progress_cb=proxy_progress,
                         )

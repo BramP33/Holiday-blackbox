@@ -8,8 +8,6 @@ from typing import Callable, Optional
 VIDEO_EXTS = {'.mp4', '.mov', '.m4v'}
 PHOTO_EXTS = {'.jpg', '.jpeg', '.png', '.heic', '.heif', '.rw2', '.cr2', '.nef', '.raf', '.dng', '.arw'}
 
-_FAILED_ENCODERS: set[str] = set()
-
 
 def _run(cmd: list[str], background_priority: bool = False) -> int:
     """Run command with configurable priority and resource limits to avoid overwhelming the system."""
@@ -166,7 +164,7 @@ def thumb_name_for(src: Path, cache_dir: Path) -> Path:
     return cache_dir / f"{safe}.jpg"
 
 
-def _video_proxy_cmd(src: Path, dst: Path, height: int, bitrate: str, encoder: str, background_priority: bool = False) -> list[str]:
+def _video_proxy_cmd(src: Path, dst: Path, height: int, bitrate: str, background_priority: bool = False) -> list[str]:
     cmd = ['ffmpeg', '-y', '-i', str(src), '-vf', f"scale=-2:{height}"]
     
     # Adjust thread limits based on priority mode
@@ -177,24 +175,13 @@ def _video_proxy_cmd(src: Path, dst: Path, height: int, bitrate: str, encoder: s
         # Normal: use up to half the available cores
         max_threads = min(3, max(1, os.cpu_count() // 2)) if os.cpu_count() else 2
     
-    if encoder == 'libx264':
-        preset = 'ultrafast' if not background_priority else 'veryfast'
-        cmd.extend([
-            '-c:v', 'libx264', 
-            '-b:v', bitrate, 
-            '-preset', preset,
-            '-threads', str(max_threads)
-        ])
-    elif encoder == 'libx265':
-        preset = 'ultrafast' if not background_priority else 'fast'
-        cmd.extend([
-            '-c:v', 'libx265', 
-            '-b:v', bitrate, 
-            '-preset', preset,
-            '-x265-params', f'pools={max_threads}:threads={max_threads}'
-        ])
-    else:
-        cmd.extend(['-c:v', encoder, '-b:v', bitrate, '-pix_fmt', 'yuv420p'])
+    preset = 'ultrafast' if not background_priority else 'veryfast'
+    cmd.extend([
+        '-c:v', 'libx264',
+        '-b:v', bitrate,
+        '-preset', preset,
+        '-threads', str(max_threads)
+    ])
     
     cmd.extend(['-c:a', 'aac', '-b:a', '128k', '-ac', '2', '-movflags', '+faststart', str(dst)])
     return cmd
@@ -205,7 +192,6 @@ def build_video_proxy(
     dst: Path,
     height: int = 480,
     bitrate: str = '1200k',
-    encoder: Optional[str] = None,
     background_priority: bool = False,
 ) -> int:
     """
@@ -216,7 +202,6 @@ def build_video_proxy(
         dst: Destination proxy file
         height: Target height in pixels
         bitrate: Target bitrate (e.g. '1200k')
-        encoder: Specific encoder to use, or None for auto-selection
         background_priority: If True, use minimal CPU to avoid interfering with UI
     """
     try:
@@ -238,73 +223,28 @@ def build_video_proxy(
         except Exception:
             pass  # Continue if disk space check fails
         
-        preferred: list[str] = []
-
-        if encoder is not None:
-            raw = encoder.strip()
-            normalized = raw.lower()
-            # No hardware acceleration: default to software encoder(s)
-            if not raw or normalized == 'auto':
-                preferred.extend(['libx264'])
-            elif normalized in {'cpu', 'software', 'none', 'disabled', 'off'}:
-                preferred.append('libx264')
-            elif normalized in {'h265', 'hevc'}:
-                # H.265 specific request (software)
-                preferred.extend(['libx265', 'libx264'])
+        valid_proxy = False
+        try:
+            cmd = _video_proxy_cmd(src, dst, height, bitrate, background_priority)
+            exit_code = _run(cmd, background_priority)
+            if exit_code == 0:
+                if dst.exists() and dst.stat().st_size > 0 and _validate_proxy(dst):
+                    valid_proxy = True
+                    return 0
+                print("Warning: Proxy validation failed; deleting incomplete file")
             else:
-                # Allow explicit encoder names, but avoid hardware encoder defaults
-                preferred.append(raw)
-        else:
-            # Default: use software H.264 proxy generation only (no hardware accel)
-            preferred.extend(['libx264'])
-
-        # Always ensure we have a CPU fallback
-        if 'libx264' not in preferred and 'libx265' not in preferred:
-            preferred.append('libx264')
-
-        exit_code = 1
-        seen: set[str] = set()
-        for current in preferred:
-            if current in seen:
-                continue
-            seen.add(current)
-            if current not in {'libx264', 'libx265'} and current in _FAILED_ENCODERS:
-                continue
-            
-            try:
-                cmd = _video_proxy_cmd(src, dst, height, bitrate, current, background_priority)
-                exit_code = _run(cmd, background_priority)
-                if exit_code == 0:
-                    # Verify output file was created successfully and is valid using ffprobe
-                    if dst.exists() and dst.stat().st_size > 0:
-                        if _validate_proxy(dst):
-                            return 0
-                        else:
-                            print(f"Warning: Encoder {current} produced invalid proxy (ffprobe check failed)")
-                            exit_code = 1
-                    else:
-                        print(f"Warning: Encoder {current} completed but output file is invalid")
-                        exit_code = 1
-                        
-                if current not in {'libx264', 'libx265'}:
-                    _FAILED_ENCODERS.add(current)
+                print(f"Warning: FFmpeg exited with code {exit_code} for {src}")
+        finally:
+            if dst.exists() and not valid_proxy:
+                try:
+                    dst.unlink()
+                except Exception:
                     try:
-                        if dst.exists():
-                            dst.unlink()
+                        dst.unlink()
                     except OSError:
                         pass
-            except Exception as e:
-                print(f"Warning: Error with encoder {current}: {e}")
-                if current not in {'libx264', 'libx265'}:
-                    _FAILED_ENCODERS.add(current)
-                try:
-                    if dst.exists():
-                        dst.unlink()
-                except OSError:
-                    pass
-                continue
 
-        return exit_code
+        return 1
         
     except Exception as e:
         print(f"Error in build_video_proxy: {e}")
@@ -371,10 +311,8 @@ def generate_for_folder(
     folder: Path,
     cache_dir: Path,
     max_cache_bytes: int,
-    prefer_gopro_thm: bool = True,
     height: int = 480,
     bitrate: str = '1200k',
-    encoder: Optional[str] = None,
     background_priority: bool = False,
     progress_cb: Optional[Callable[[int, int, Path, str], None]] = None,
 ) -> None:
@@ -384,10 +322,8 @@ def generate_for_folder(
         folder: Source folder to scan for media
         cache_dir: Directory to store generated proxies/thumbs
         max_cache_bytes: Maximum cache size in bytes
-        prefer_gopro_thm: Whether to prefer GoPro THM files for thumbnails
         height: Target height for video proxies
         bitrate: Target bitrate for video proxies
-        encoder: Specific encoder to use for video proxies
         background_priority: If True, use minimal CPU to avoid interfering with UI
         progress_cb: Callback function called after each item
 
@@ -432,13 +368,12 @@ def generate_for_folder(
         try:
             logging.info(f"Processing task kind={kind} src={src} dst={dst}")
             if kind == 'video':
-                result = build_video_proxy(src, dst, height=height, bitrate=bitrate, encoder=encoder, background_priority=background_priority)
+                result = build_video_proxy(src, dst, height=height, bitrate=bitrate, background_priority=background_priority)
                 exists = dst.exists()
                 size = dst.stat().st_size if exists else 0
-                valid = _validate_proxy(dst) if exists else False
-                logging.info(f"Result for video {src}: code={result} exists={exists} size={size} valid={valid}")
-                if result != 0 or not (exists and valid):
-                    logging.warning(f"Failed to generate proxy for {src}; code={result} exists={exists} valid={valid}")
+                logging.info(f"Result for video {src}: code={result} exists={exists} size={size}")
+                if result != 0 or not exists or size == 0:
+                    logging.warning(f"Failed to generate proxy for {src}; code={result} exists={exists} size={size}")
             elif kind == 'photo':
                 result = build_photo_thumb(src, dst)
                 logging.info(f"Result for photo thumb {src}: code={result} exists={dst.exists()}")
