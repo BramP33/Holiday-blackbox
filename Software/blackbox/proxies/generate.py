@@ -429,20 +429,27 @@ def generate_for_folder(
     # Execute tasks with better error handling
     for kind, src, dst in tasks:
         try:
+            logging.info(f"Processing task kind={kind} src={src} dst={dst}")
             if kind == 'video':
                 result = build_video_proxy(src, dst, height=height, bitrate=bitrate, encoder=encoder, background_priority=background_priority)
-                if result != 0:
-                    print(f"Warning: Failed to generate proxy for {src}")
+                exists = dst.exists()
+                size = dst.stat().st_size if exists else 0
+                valid = _validate_proxy(dst) if exists else False
+                logging.info(f"Result for video {src}: code={result} exists={exists} size={size} valid={valid}")
+                if result != 0 or not (exists and valid):
+                    logging.warning(f"Failed to generate proxy for {src}; code={result} exists={exists} valid={valid}")
             elif kind == 'photo':
                 result = build_photo_thumb(src, dst)
+                logging.info(f"Result for photo thumb {src}: code={result} exists={dst.exists()}")
                 if result != 0:
-                    print(f"Warning: Failed to generate photo thumbnail for {src}")
+                    logging.warning(f"Failed to generate photo thumbnail for {src}; code={result}")
             else:
                 result = build_video_thumb(src, dst, background_priority=background_priority)
+                logging.info(f"Result for video thumb {src}: code={result} exists={dst.exists()}")
                 if result != 0:
-                    print(f"Warning: Failed to generate video thumbnail for {src}")
+                    logging.warning(f"Failed to generate video thumbnail for {src}; code={result}")
         except Exception as e:
-            print(f"Error processing {src}: {e}")
+            logging.error(f"Error processing {src}: {e}")
             # Continue with next file instead of crashing
             
         done += 1
