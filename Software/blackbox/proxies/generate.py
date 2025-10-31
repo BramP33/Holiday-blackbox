@@ -4,9 +4,12 @@ import subprocess
 import os
 import logging
 from typing import Callable, Optional
+import threading
 
 VIDEO_EXTS = {'.mp4', '.mov', '.m4v'}
 PHOTO_EXTS = {'.jpg', '.jpeg', '.png', '.heic', '.heif', '.rw2', '.cr2', '.nef', '.raf', '.dng', '.arw'}
+
+_ENCODE_LOCK = threading.Lock()
 
 
 def _run(cmd: list[str], background_priority: bool = False) -> int:
@@ -195,7 +198,9 @@ def build_video_proxy(
     background_priority: bool = False,
 ) -> int:
     """
-    Build a video proxy with configurable CPU usage and robust error handling.
+    Build a video proxy with configurable CPU usage.
+    A global lock ensures only a single ffmpeg process runs at a time, keeping
+    system load predictable and avoiding concurrent writers.
     
     Args:
         src: Source video file
@@ -223,26 +228,45 @@ def build_video_proxy(
         except Exception:
             pass  # Continue if disk space check fails
         
+        temp_dst = dst.with_suffix(dst.suffix + '.tmp')
+        exit_code = 1
         valid_proxy = False
+
+        with _ENCODE_LOCK:
+            try:
+                if temp_dst.exists():
+                    temp_dst.unlink()
+            except OSError:
+                pass
+
+            try:
+                cmd = _video_proxy_cmd(src, temp_dst, height, bitrate, background_priority)
+                exit_code = _run(cmd, background_priority)
+            except Exception as run_exc:
+                print(f"Warning: Error while running ffmpeg for {src}: {run_exc}")
+                exit_code = 1
+
         try:
-            cmd = _video_proxy_cmd(src, dst, height, bitrate, background_priority)
-            exit_code = _run(cmd, background_priority)
             if exit_code == 0:
-                if dst.exists() and dst.stat().st_size > 0 and _validate_proxy(dst):
+                if temp_dst.exists() and temp_dst.stat().st_size > 0 and _validate_proxy(temp_dst):
+                    try:
+                        if dst.exists():
+                            dst.unlink()
+                    except OSError:
+                        pass
+                    temp_dst.replace(dst)
                     valid_proxy = True
                     return 0
                 print("Warning: Proxy validation failed; deleting incomplete file")
             else:
                 print(f"Warning: FFmpeg exited with code {exit_code} for {src}")
         finally:
-            if dst.exists() and not valid_proxy:
+            if not valid_proxy:
                 try:
-                    dst.unlink()
-                except Exception:
-                    try:
-                        dst.unlink()
-                    except OSError:
-                        pass
+                    if temp_dst.exists():
+                        temp_dst.unlink()
+                except OSError:
+                    pass
 
         return 1
         
@@ -342,14 +366,41 @@ def generate_for_folder(
             ext = p.suffix.lower()
             if ext in VIDEO_EXTS:
                 proxy = proxy_name_for(p, cache_dir)
-                if not proxy.exists():
+                needs_proxy = True
+                if proxy.exists():
+                    try:
+                        if proxy.stat().st_size <= 0 or not _validate_proxy(proxy):
+                            proxy.unlink()
+                        else:
+                            needs_proxy = False
+                    except OSError:
+                        needs_proxy = True
+                if needs_proxy:
                     tasks.append(('video', p, proxy))
                 thumb = thumb_name_for(p, cache_dir)
-                if not thumb.exists():
+                needs_thumb = True
+                if thumb.exists():
+                    try:
+                        if thumb.stat().st_size > 0:
+                            needs_thumb = False
+                        else:
+                            thumb.unlink()
+                    except OSError:
+                        needs_thumb = True
+                if needs_thumb:
                     tasks.append(('video_thumb', p, thumb))
             elif ext in PHOTO_EXTS:
                 thumb = thumb_name_for(p, cache_dir)
-                if not thumb.exists():
+                needs_thumb = True
+                if thumb.exists():
+                    try:
+                        if thumb.stat().st_size > 0:
+                            needs_thumb = False
+                        else:
+                            thumb.unlink()
+                    except OSError:
+                        needs_thumb = True
+                if needs_thumb:
                     tasks.append(('photo', p, thumb))
 
     total = len(tasks)
