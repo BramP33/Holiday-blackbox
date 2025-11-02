@@ -384,6 +384,13 @@ class TranscriptionWorker:
             return False
         rel = job['path']
         path = self._root / rel
+        
+        # Skip macOS resource fork files and hidden metadata files
+        if path.name.startswith('._') or path.name.startswith('.'):
+            self._queue.mark_error(rel, 'skipped: metadata/hidden file')
+            _LOG.info('Skipping %s (metadata or hidden file)', rel)
+            return True
+        
         if not path.exists():
             self._queue.mark_error(rel, 'file_missing')
             _LOG.warning('Skipping %s (file missing)', rel)
@@ -441,10 +448,7 @@ class TranscriptionWorker:
             if not self._enabled:
                 time.sleep(self._poll_seconds)
                 continue
-            wait = self._seconds_until_window()
-            if wait > 0:
-                time.sleep(min(wait, max(self._poll_seconds, 30.0)))
-                continue
+            # Window check removed - transcribe anytime
             processed = self.process_next()
             if not processed:
                 time.sleep(self._poll_seconds)
@@ -453,11 +457,7 @@ class TranscriptionWorker:
         if not self._enabled:
             _LOG.info('Transcription worker disabled in config')
             return
-        if not ignore_window:
-            wait = self._seconds_until_window()
-            if wait > 0:
-                _LOG.info('Outside transcription window, waiting %.0f seconds', wait)
-                time.sleep(wait)
+        # Window check removed - transcribe anytime
         while self.process_next():
             pass
 

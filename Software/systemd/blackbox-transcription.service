@@ -1,0 +1,15 @@
+[Unit]
+Description=Holiday Blackbox Transcription Worker
+After=network-online.target blackbox.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=blackbox
+WorkingDirectory=/home/blackbox/Holiday-blackbox/Software
+ExecStart=/home/blackbox/Holiday-blackbox/Software/venv/bin/python -m blackbox.transcription
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
