@@ -201,8 +201,23 @@ class ApiClient {
   Future<Map<String, dynamic>> startTranscription() async {
     final uri = _resolve('/api/transcription/start');
     final response = await _client.post(uri);
+    if (response.statusCode == 503) {
+      // Service unavailable - transcription service not running
+      final jsonMap = json.decode(response.body) as Map<String, dynamic>;
+      throw ApiException(jsonMap['message'] ?? 'Transcription service not running');
+    }
     if (response.statusCode != 200) {
       throw ApiException('Failed to start transcription (${response.statusCode})');
+    }
+    final jsonMap = json.decode(response.body) as Map<String, dynamic>;
+    return jsonMap;
+  }
+
+  Future<Map<String, dynamic>> getTranscriptionServiceStatus() async {
+    final uri = _resolve('/api/transcription/service-status');
+    final response = await _client.get(uri);
+    if (response.statusCode != 200) {
+      throw ApiException('Failed to get service status (${response.statusCode})');
     }
     final jsonMap = json.decode(response.body) as Map<String, dynamic>;
     return jsonMap;
