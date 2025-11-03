@@ -17,20 +17,46 @@ BUILD_DIR_GENERIC="${FLUTTER_DIR}/build/linux/release/bundle"
 echo "[Rebuild] Project root: ${PROJECT_ROOT}"
 echo "[Rebuild] Flutter app dir: ${FLUTTER_DIR}"
 
+# Try to find flutter if not in PATH
 if ! command -v flutter >/dev/null 2>&1; then
-  echo "[Rebuild] ERROR: 'flutter' command not found. Install Flutter or add it to PATH." >&2
-  exit 1
+  echo "[Rebuild] Flutter not found in PATH, searching common locations..."
+  
+  # Common Flutter installation locations
+  FLUTTER_LOCATIONS=(
+    "$HOME/flutter/bin/flutter"
+    "$HOME/snap/flutter/common/flutter/bin/flutter"
+    "/opt/flutter/bin/flutter"
+    "$HOME/development/flutter/bin/flutter"
+    "$HOME/.flutter/bin/flutter"
+  )
+  
+  FLUTTER_CMD=""
+  for location in "${FLUTTER_LOCATIONS[@]}"; do
+    if [ -f "$location" ]; then
+      FLUTTER_CMD="$location"
+      echo "[Rebuild] Found Flutter at: $FLUTTER_CMD"
+      break
+    fi
+  done
+  
+  if [ -z "$FLUTTER_CMD" ]; then
+    echo "[Rebuild] ERROR: 'flutter' command not found." >&2
+    echo "[Rebuild] Please run: ${SCRIPT_DIR}/setup_flutter_path.sh" >&2
+    exit 1
+  fi
+else
+  FLUTTER_CMD="flutter"
 fi
 
 pushd "${FLUTTER_DIR}" >/dev/null
 echo "[Rebuild] Cleaning previous build artifacts..."
-flutter clean
+"$FLUTTER_CMD" clean
 
 echo "[Rebuild] Running 'flutter pub get'..."
-flutter pub get
+"$FLUTTER_CMD" pub get
 
 echo "[Rebuild] Building release bundle for Linux..."
-flutter build linux --release
+"$FLUTTER_CMD" build linux --release
 
 popd >/dev/null
 
