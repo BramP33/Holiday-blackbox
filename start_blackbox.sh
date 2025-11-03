@@ -9,10 +9,21 @@ set -e
 PROJECT_ROOT="/home/blackbox/Holiday-blackbox"
 SOFTWARE_DIR="$PROJECT_ROOT/Software"
 FLUTTER_DIR="$SOFTWARE_DIR/flutter_frontend"
-BUILD_DIR="$FLUTTER_DIR/build/linux/arm64/release/bundle"
-APP_BINARY="$BUILD_DIR/flutter_frontend"
-FLUTTER_DIR="$SOFTWARE_DIR/flutter_frontend"
-BUILD_DIR="$FLUTTER_DIR/build/linux/arm64/release/bundle"
+
+# Flutter uses different paths depending on architecture
+# Try arm64 first (explicit), then fall back to generic linux path
+BUILD_DIR_ARM64="$FLUTTER_DIR/build/linux/arm64/release/bundle"
+BUILD_DIR_GENERIC="$FLUTTER_DIR/build/linux/release/bundle"
+
+# Determine which build exists
+if [ -d "$BUILD_DIR_ARM64" ]; then
+    BUILD_DIR="$BUILD_DIR_ARM64"
+elif [ -d "$BUILD_DIR_GENERIC" ]; then
+    BUILD_DIR="$BUILD_DIR_GENERIC"
+else
+    BUILD_DIR="$BUILD_DIR_GENERIC"  # Will be created on first build
+fi
+
 APP_BINARY="$BUILD_DIR/flutter_frontend"
 
 # Colors for output
@@ -46,6 +57,15 @@ log_success() {
 
 # Function to check if app binary exists and is up-to-date
 check_build() {
+    # Re-detect build directory after build
+    if [ -d "$BUILD_DIR_ARM64" ]; then
+        BUILD_DIR="$BUILD_DIR_ARM64"
+        APP_BINARY="$BUILD_DIR/flutter_frontend"
+    elif [ -d "$BUILD_DIR_GENERIC" ]; then
+        BUILD_DIR="$BUILD_DIR_GENERIC"
+        APP_BINARY="$BUILD_DIR/flutter_frontend"
+    fi
+    
     if [ ! -f "$APP_BINARY" ]; then
         error "App binary not found at $APP_BINARY"
         log "Building Flutter app..."
@@ -55,7 +75,20 @@ check_build() {
             error "Flutter build failed!"
             exit 1
         fi
-        success "Flutter build completed"
+        
+        # Re-detect build directory after successful build
+        if [ -d "$BUILD_DIR_ARM64" ]; then
+            BUILD_DIR="$BUILD_DIR_ARM64"
+            APP_BINARY="$BUILD_DIR/flutter_frontend"
+        elif [ -d "$BUILD_DIR_GENERIC" ]; then
+            BUILD_DIR="$BUILD_DIR_GENERIC"
+            APP_BINARY="$BUILD_DIR/flutter_frontend"
+        else
+            error "Flutter build completed but binary not found!"
+            exit 1
+        fi
+        
+        success "Flutter build completed at $BUILD_DIR"
     else
         log "App binary found: $APP_BINARY"
         

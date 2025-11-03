@@ -114,7 +114,20 @@ cd flutter_frontend
 # 8. Deploy Flutter app
 log_info "Deploying Flutter application..."
 sudo mkdir -p /opt/blackbox_flutter
-sudo cp -r build/linux/arm64/release/bundle/* /opt/blackbox_flutter/
+
+# Flutter may create different build paths depending on the system
+# Try arm64-specific path first, then fall back to generic linux path
+if [ -d "build/linux/arm64/release/bundle" ]; then
+    log_info "Using ARM64-specific build output"
+    sudo cp -r build/linux/arm64/release/bundle/* /opt/blackbox_flutter/
+elif [ -d "build/linux/release/bundle" ]; then
+    log_info "Using generic Linux build output"
+    sudo cp -r build/linux/release/bundle/* /opt/blackbox_flutter/
+else
+    log_error "Flutter build output not found in expected locations!"
+    exit 1
+fi
+
 sudo chmod +x /opt/blackbox_flutter/blackbox_flutter
 sudo chown -R blackbox:blackbox /opt/blackbox_flutter
 
