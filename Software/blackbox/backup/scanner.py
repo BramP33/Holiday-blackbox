@@ -4,15 +4,10 @@ from typing import Iterable, Optional
 import os
 import subprocess
 import json
-import logging
-
-
-logger = logging.getLogger(__name__)
 
 
 DCIM_NAMES = {"DCIM", "dcim"}
 MEDIA_EXTS = {'.jpg', '.jpeg', '.png', '.rw2', '.cr2', '.nef', '.raf', '.dng', '.arw', '.mp4', '.mov', '.m4v'}
-VIDEO_EXTS = {'.mp4', '.mov', '.m4v'}
 
 
 def iter_mounts(source_roots: Iterable[str]) -> Iterable[Path]:
@@ -160,81 +155,17 @@ def find_source_mounts(source_roots: Iterable[str]) -> list[Path]:
     return medias
 
 
-def _get_video_metadata(video_path: Path) -> tuple[Optional[str], Optional[str]]:
-    """Extract camera make and model from video metadata using ffprobe.
-    
-    Returns:
-        tuple: (camera_make, camera_model) or (None, None) if unavailable
-    """
-    try:
-        import subprocess
-        
-        cmd = [
-            'ffprobe',
-            '-v', 'quiet',
-            '-print_format', 'json',
-            '-show_entries', 'format_tags:stream_tags',
-            str(video_path),
-        ]
-        
-        proc = subprocess.run(cmd, capture_output=True, text=True, check=False, timeout=5)
-        if proc.returncode != 0:
-            return None, None
-            
-        data = json.loads(proc.stdout or '{}')
-        
-        # Collect all tags from format and streams
-        tags = {}
-        fmt = data.get('format') or {}
-        for key, value in (fmt.get('tags') or {}).items():
-            tags[key.lower()] = str(value)
-        
-        for stream in data.get('streams') or []:
-            for key, value in (stream.get('tags') or {}).items():
-                key_lower = key.lower()
-                if key_lower not in tags:
-                    tags[key_lower] = str(value)
-        
-        # Extract make
-        camera_make = None
-        for key in ['com.apple.quicktime.make', 'make', 'camera_make', 
-                    'com.apple.quicktime.camera.make', 'com.apple.quicktime.manufacturer',
-                    'com.android.manufacturer', 'manufacturer']:
-            if key in tags and tags[key]:
-                camera_make = tags[key].strip().strip('\0')
-                if camera_make:
-                    break
-        
-        # Extract model
-        camera_model = None
-        for key in ['com.apple.quicktime.model', 'model', 'camera_model',
-                    'com.apple.quicktime.camera.model', 'com.apple.quicktime.device.model',
-                    'device_model', 'com.android.model', 'android_model']:
-            if key in tags and tags[key]:
-                camera_model = tags[key].strip().strip('\0')
-                if camera_model:
-                    break
-        
-        return camera_make, camera_model
-        
-    except Exception as e:
-        logger.debug(f"Failed to extract metadata from {video_path}: {e}")
-        return None, None
-
-
 def classify_device_code(root: Path, device_label: str | None = None) -> str:
-    """Return a device code: gopro|drone|360|lumix_g7|iphone|sony|insta360|mobile|camera
+    """Return a device code: gopro|drone|360|lumix_g7|mobile|camera
     
-    Classification is based on (in priority order):
+    Classification is based on:
     1. Device label (for uploads via web)
-    2. Video metadata (camera make/model from ffprobe) - MOST RELIABLE
-    3. File naming patterns (GOPRxxxx, DJI_xxxx, IMG_xxxx, etc.)
-    4. File extensions (.360, .insv, .insp)
-    5. Mount point name patterns
+    2. File naming patterns (GOPRxxxx.mp4, DJI_xxxx.MP4, Pxxxxxxx.mp4)
+    3. File extensions (.360)
+    4. Mount point name patterns
     """
     # Check if uploaded via web (mobile)
     if device_label and device_label.lower() in ('uploads', 'upload'):
-        logger.info("Detected 'mobile' via device label")
         return 'mobile'
     
     # Check file patterns in the source
@@ -246,150 +177,46 @@ def classify_device_code(root: Path, device_label: str | None = None) -> str:
             scan_root = dcim
             break
     
-    # Step 1: Try metadata-first approach (sample a few video files)
     try:
-        video_samples = []
-        for dirpath, _, files in os.walk(scan_root):
-            for filename in files:
-                if Path(filename).suffix.lower() in VIDEO_EXTS:
-                    video_samples.append(Path(dirpath) / filename)
-                    if len(video_samples) >= 3:  # Sample 3 videos for metadata
-                        break
-            if len(video_samples) >= 3:
-                break
-        
-        # Check metadata from sampled videos
-        for video_file in video_samples:
-            camera_make, camera_model = _get_video_metadata(video_file)
-            
-            if camera_make:
-                make_lower = camera_make.lower()
-                model_lower = (camera_model or '').lower()
-                
-                # GoPro detection
-                if 'gopro' in make_lower or 'hero' in model_lower or 'max' in model_lower:
-                    logger.info(f"Detected 'gopro' via metadata: {camera_make} {camera_model}")
-                    return 'gopro'
-                
-                # DJI Drone detection
-                if 'dji' in make_lower or any(x in model_lower for x in ['mavic', 'phantom', 'mini', 'air']):
-                    logger.info(f"Detected 'drone' via metadata: {camera_make} {camera_model}")
-                    return 'drone'
-                
-                # Apple/iPhone detection
-                if 'apple' in make_lower or 'iphone' in model_lower:
-                    logger.info(f"Detected 'iphone' via metadata: {camera_make} {camera_model}")
-                    return 'iphone'
-                
-                # Sony detection
-                if 'sony' in make_lower:
-                    logger.info(f"Detected 'sony' via metadata: {camera_make} {camera_model}")
-                    return 'sony'
-                
-                # Insta360 detection
-                if 'insta360' in make_lower or 'insta360' in model_lower:
-                    logger.info(f"Detected 'insta360' via metadata: {camera_make} {camera_model}")
-                    return 'insta360'
-                
-                # Panasonic Lumix detection
-                if 'panasonic' in make_lower and 'lumix' in model_lower:
-                    logger.info(f"Detected 'lumix_g7' via metadata: {camera_make} {camera_model}")
-                    return 'lumix_g7'
-                
-    except Exception as e:
-        logger.debug(f"Metadata detection failed: {e}")
-    
-    # Step 2: Filename pattern detection
-    try:
+        # Sample first 100 files for pattern detection
         checked = 0
         max_check = 100
-        pattern_scores = {}  # Track pattern matches for confidence
-        
         for dirpath, _, files in os.walk(scan_root):
             for filename in files:
                 if checked >= max_check:
                     break
                 checked += 1
                 
-                filename_upper = filename.upper()
-                filename_lower = filename.lower()
-                
-                # GoPro patterns: GOPR, GH01, GP (for Hero sessions)
-                if any(filename_upper.startswith(prefix) for prefix in ['GOPR', 'GH01', 'GP']):
-                    pattern_scores['gopro'] = pattern_scores.get('gopro', 0) + 1
-                
-                # GoPro MAX: GS01xxxx.360
-                if filename_upper.startswith('GS') and filename_lower.endswith('.360'):
-                    pattern_scores['gopro'] = pattern_scores.get('gopro', 0) + 2  # Higher confidence
-                
-                # DJI Drone: DJI_, PANO_ (for panoramas)
-                if any(filename_upper.startswith(prefix) for prefix in ['DJI_', 'PANO_']):
-                    pattern_scores['drone'] = pattern_scores.get('drone', 0) + 1
-                
-                # 360 Camera: *.360 extension
-                if filename_lower.endswith('.360'):
-                    pattern_scores['360'] = pattern_scores.get('360', 0) + 1
-                
-                # Insta360: .insv, .insp, VID_ prefix
-                if filename_lower.endswith(('.insv', '.insp')) or filename_upper.startswith('VID_'):
-                    pattern_scores['insta360'] = pattern_scores.get('insta360', 0) + 1
-                
-                # iPhone: IMG_ prefix (common for iOS media)
-                if filename_upper.startswith('IMG_') and Path(filename).suffix.lower() in MEDIA_EXTS:
-                    pattern_scores['iphone'] = pattern_scores.get('iphone', 0) + 1
-                
-                # Sony: DSC_ or C00 prefix
-                if filename_upper.startswith(('DSC_', 'C00')):
-                    pattern_scores['sony'] = pattern_scores.get('sony', 0) + 1
-                
+                # GoPro: GOPRxxxx.mp4
+                if filename.upper().startswith('GOPR'):
+                    return 'gopro'
+                # DJI Drone: DJI_xxxx.MP4
+                if filename.upper().startswith('DJI_'):
+                    return 'drone'
+                # 360 Camera: *.360
+                if filename.lower().endswith('.360'):
+                    return '360'
                 # Panasonic Lumix G7: Pxxxxxxx.mp4 (starts with capital P)
                 if len(filename) > 0 and filename[0] == 'P' and filename[0].isupper():
                     if Path(filename).suffix.lower() in MEDIA_EXTS:
-                        pattern_scores['lumix_g7'] = pattern_scores.get('lumix_g7', 0) + 1
-                
+                        return 'lumix_g7'
             if checked >= max_check:
                 break
-        
-        # Return the device with highest pattern score
-        if pattern_scores:
-            best_match = max(pattern_scores.items(), key=lambda x: x[1])
-            device, score = best_match
-            logger.info(f"Detected '{device}' via filename patterns (score: {score}/{checked} files)")
-            return device
-            
-    except Exception as e:
-        logger.warning(f"Filename pattern detection failed: {e}")
+    except Exception:
+        pass
     
-    # Step 3: Fallback to mount name patterns
+    # Fallback to mount name patterns
     name = root.name.lower()
     if 'gopro' in name:
-        logger.info(f"Detected 'gopro' via mount name: {root.name}")
         return 'gopro'
-    
     # DJI
     if (root / 'DCIM' / '100MEDIA').exists() or 'dji' in name:
-        logger.info(f"Detected 'drone' via mount structure/name: {root.name}")
         return 'drone'
-    
     # 360
     if any(s in name for s in ('360', 'max', 'fusion')):
-        logger.info(f"Detected '360' via mount name: {root.name}")
         return '360'
-    
-    # Insta360
-    if 'insta360' in name:
-        logger.info(f"Detected 'insta360' via mount name: {root.name}")
-        return 'insta360'
-    
     # Lumix G7 hints
     if any(s in name for s in ('lumix', 'panasonic', 'g7')):
-        logger.info(f"Detected 'lumix_g7' via mount name: {root.name}")
         return 'lumix_g7'
     
-    # iPhone hints
-    if 'iphone' in name or 'apple' in name:
-        logger.info(f"Detected 'iphone' via mount name: {root.name}")
-        return 'iphone'
-    
-    logger.info(f"No specific device detected, defaulting to 'camera' for mount: {root.name}")
     return 'camera'

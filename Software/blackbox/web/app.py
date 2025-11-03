@@ -8,7 +8,6 @@ import json
 import logging
 import os
 import shutil
-import subprocess
 import tempfile
 import threading
 import time
@@ -27,39 +26,7 @@ from ..backup.scanner import find_source_mounts
 from ..hardware.usb import ensure_usb_mounted
 from ..health import collect_health
 from ..ap_mode import start_ap, stop_ap, get_ap_address
-
-
-def _check_transcription_service_running() -> tuple[bool, str]:
-    """
-    Check if the transcription systemd service is running.
-    Returns (is_running, status_message).
-    """
-    service_names = [
-        'blackbox-transcription.service',
-        'blackbox-transcription',
-        'holiday-blackbox-transcription.service',
-    ]
-    
-    for service_name in service_names:
-        try:
-            result = subprocess.run(
-                ['systemctl', 'is-active', service_name],
-                capture_output=True,
-                text=True,
-                timeout=2
-            )
-            status = result.stdout.strip()
-            
-            if status == 'active':
-                return True, f'Service {service_name} is running'
-            elif status in ('inactive', 'failed', 'dead'):
-                return False, f'Service {service_name} is {status}. Please start it with: sudo systemctl start {service_name}'
-        except (subprocess.TimeoutExpired, FileNotFoundError, Exception):
-            continue
-    
-    # If no service found, assume manual mode (no service configured)
-    return True, 'No systemd service configured (manual mode)'
-
+#You've lost the game ma nigga
 def create_app() -> Flask:
     # Configure logging
     logging.basicConfig(
@@ -873,11 +840,6 @@ def create_app() -> Flask:
             'query': suggestion.query,
         }
 
-    @app.get('/api/ping')
-    def api_ping():
-        """Lightweight health check endpoint for startup checks."""
-        return jsonify({'status': 'ok', 'timestamp': _now_iso()})
-
     @app.get('/api/stats')
     def api_stats():
         cfg_local = load_config()
@@ -1209,29 +1171,13 @@ def create_app() -> Flask:
 
     @app.post('/api/transcription/start')
     def api_transcription_start():
-        # First check if transcription service is running
-        service_running, service_msg = _check_transcription_service_running()
-        if not service_running:
-            return jsonify({
-                'status': 'error',
-                'message': 'Transcription service is not running',
-                'details': service_msg,
-                'action': 'Please start the transcription service first'
-            }), 503  # Service Unavailable
-        
         try:
             # Queue all video files for transcription
             root = paths.trip_root()
             video_files = list(_iter_media(root, VIDEO_EXTS))
             
             queued_count = 0
-            skipped_count = 0
             for video_file in video_files:
-                # Skip macOS resource fork files and other hidden metadata files
-                if video_file.name.startswith('._') or video_file.name.startswith('.'):
-                    skipped_count += 1
-                    continue
-                
                 rel_path = str(video_file.relative_to(paths.trip_root()))
                 try:
                     # Check if already transcribed
@@ -1250,24 +1196,13 @@ def create_app() -> Flask:
                 'status': 'started',
                 'queued_files': queued_count,
                 'total_files': len(video_files),
-                'message': f'Queued {queued_count} videos for transcription',
-                'service_status': service_msg
+                'message': f'Queued {queued_count} videos for transcription'
             })
         except Exception as exc:
             return jsonify({
                 'status': 'error',
                 'message': f'Failed to start transcription: {exc}'
             }), 500
-
-    @app.get('/api/transcription/service-status')
-    def api_transcription_service_status():
-        """Check if the transcription worker service is running."""
-        service_running, service_msg = _check_transcription_service_running()
-        return jsonify({
-            'running': service_running,
-            'message': service_msg,
-            'status': 'active' if service_running else 'inactive'
-        })
 
     @app.post('/api/transcription/delete')
     def api_transcription_delete():
