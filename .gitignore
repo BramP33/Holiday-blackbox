@@ -17,3 +17,10 @@ Software/run_output/
 # Ignore Flutter build artifacts
 /Software/flutter_frontend/build/
 
+# Ignore downloaded AI models (too large for GitHub)
+Software/.models/
+
+# Ignore config backups
+Software/config.yml.bak-*
+Software/config.yml.old-*
+

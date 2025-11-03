@@ -59,6 +59,8 @@ def _iterate_media_files(
         allowed = {ext.lower() for ext in allowed_exts}
     for dirpath, _, files in os.walk(root):
         for fn in files:
+            if fn.startswith('._'):
+                continue  # Skip macOS resource fork sidecars
             p = Path(dirpath) / fn
             suffix = p.suffix.lower()
             if suffix not in allowed:
