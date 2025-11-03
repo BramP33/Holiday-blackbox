@@ -340,7 +340,7 @@ class _MediaLibraryScreenState extends ConsumerState<MediaLibraryScreen>
                   crossAxisCount: gridColumns,
                   mainAxisSpacing: spacing,
                   crossAxisSpacing: spacing,
-                  childAspectRatio: isCompact ? 0.82 : 0.88,
+                  childAspectRatio: isCompact ? 1.05 : 1.1,
                 ),
                 itemCount: page.items.length,
                 itemBuilder: (context, index) {
@@ -937,6 +937,7 @@ class _VideoGridCard extends StatelessWidget {
       child: Material(
         color: AppColors.charcoalAlt,
         child: Column(
+          mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             InkWell(

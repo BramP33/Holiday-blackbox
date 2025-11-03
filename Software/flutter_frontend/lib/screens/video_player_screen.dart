@@ -28,6 +28,7 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> {
   bool _isPlaying = false;
   bool _controlsVisible = true;
   bool _isMuted = true; // Start muted to prevent audio errors
+  bool _infoVisible = false; // Track info panel visibility
   Duration _position = Duration.zero;
   Duration _duration = Duration.zero;
   Duration? _scrubOverride;
@@ -115,13 +116,19 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> {
   void _onVideoPlayerUpdate() {
     if (!mounted) return;
     final value = _controller.value;
+    final newPosition = value.position;
     setState(() {
       _isPlaying = value.isPlaying;
       _duration = value.duration;
       if (!value.isBuffering) {
-        _position = value.position;
+        _position = newPosition;
       }
     });
+    
+    // Update subtitle whenever position changes
+    if (!value.isBuffering) {
+      _updateSubtitleForPosition(newPosition);
+    }
     
     if (value.hasError) {
       setState(() {
@@ -135,12 +142,15 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> {
       if (!mounted || !_controller.value.isInitialized) return;
       
       final position = _controller.value.position;
+      // Always update subtitle position, even if _position hasn't changed
+      // This ensures subtitles update during playback
       if (position != _position) {
         setState(() {
           _position = position;
         });
-        _updateSubtitleForPosition(position);
       }
+      // Update subtitle for current position every tick
+      _updateSubtitleForPosition(position);
     });
   }
 
@@ -239,6 +249,23 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> {
     }
   }
 
+  void _toggleInfo() {
+    setState(() {
+      _infoVisible = !_infoVisible;
+    });
+    if (_infoVisible) {
+      _showControls(); // Show controls when info is opened
+    }
+  }
+
+  void _closeInfo() {
+    if (_infoVisible) {
+      setState(() {
+        _infoVisible = false;
+      });
+    }
+  }
+
   @override
   void dispose() {
     _positionTimer?.cancel();
@@ -286,77 +313,55 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> {
       return;
     }
 
-    int? nextIndex = _activeSubtitleIndex;
-
-    if (nextIndex != null) {
-      final current = _subtitleEntries[nextIndex];
-      if (position >= current.start && position <= current.end) {
-        // Already in the right segment, but ensure subtitle is visible
-        if (_activeSubtitle != current.text) {
-          setState(() {
-            _activeSubtitle = current.text;
-          });
-        }
+    // Find the subtitle entry that should be active at this position
+    int? foundIndex;
+    
+    // First, check if we're still in the current subtitle (optimization)
+    if (_activeSubtitleIndex != null && 
+        _activeSubtitleIndex! >= 0 && 
+        _activeSubtitleIndex! < _subtitleEntries.length) {
+      final current = _subtitleEntries[_activeSubtitleIndex!];
+      if (position >= current.start && position < current.end) {
+        // Still in the same subtitle, no need to update
         return;
       }
-      if (position < current.start) {
-        for (var i = nextIndex - 1; i >= 0; i--) {
-          final entry = _subtitleEntries[i];
-          if (position > entry.end) {
-            break;
-          }
-          if (position >= entry.start && position <= entry.end) {
-            nextIndex = i;
-            break;
-          }
+    }
+
+    // Search for the correct subtitle
+    // Using binary search would be more efficient, but linear is fine for now
+    for (var i = 0; i < _subtitleEntries.length; i++) {
+      final entry = _subtitleEntries[i];
+      
+      // Check if position is within this subtitle's time range
+      if (position >= entry.start && position < entry.end) {
+        foundIndex = i;
+        break;
+      }
+      
+      // If we've passed the current position, no active subtitle
+      if (position < entry.start) {
+        break;
+      }
+    }
+
+    // Update state if subtitle changed
+    if (foundIndex != _activeSubtitleIndex) {
+      if (foundIndex == null) {
+        // No active subtitle at this position
+        if (_activeSubtitleIndex != null || _activeSubtitle != null) {
+          setState(() {
+            _activeSubtitleIndex = null;
+            _activeSubtitle = null;
+          });
         }
       } else {
-        for (var i = nextIndex + 1; i < _subtitleEntries.length; i++) {
-          final entry = _subtitleEntries[i];
-          if (position < entry.start) {
-            nextIndex = null;
-            break;
-          }
-          if (position <= entry.end) {
-            nextIndex = i;
-            break;
-          }
-        }
-      }
-    }
-
-    if (nextIndex == null || nextIndex < 0 || nextIndex >= _subtitleEntries.length) {
-      int? found;
-      for (var i = 0; i < _subtitleEntries.length; i++) {
-        final entry = _subtitleEntries[i];
-        if (position < entry.start) {
-          break;
-        }
-        if (position <= entry.end) {
-          found = i;
-          break;
-        }
-      }
-      nextIndex = found;
-    }
-
-    if (nextIndex == null) {
-      if (_activeSubtitleIndex != null || _activeSubtitle != null) {
+        // New subtitle found
+        final entry = _subtitleEntries[foundIndex];
         setState(() {
-          _activeSubtitleIndex = null;
-          _activeSubtitle = null;
+          _activeSubtitleIndex = foundIndex;
+          _activeSubtitle = entry.text;
         });
       }
-      return;
-    }
-
-    final entry = _subtitleEntries[nextIndex];
-    if (nextIndex != _activeSubtitleIndex || entry.text != _activeSubtitle) {
-      print('Updating subtitle at ${position.inSeconds}s: "${entry.text}"'); // Debug
-      setState(() {
-        _activeSubtitleIndex = nextIndex;
-        _activeSubtitle = entry.text;
-      });
     }
   }
 
@@ -462,15 +467,20 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> {
       backgroundColor: Colors.black,
       body: SafeArea(
         bottom: false,
-        child: Column(
+        child: Stack(
           children: [
-            Expanded(
-              flex: 2,
-              child: _buildVideoContainer(isCompact),
-            ),
-            Expanded(
-              child: _buildMetadataSection(context, isCompact),
-            ),
+            // Video takes full screen
+            _buildVideoContainer(isCompact),
+            // Semi-transparent backdrop when info is visible
+            if (_infoVisible)
+              GestureDetector(
+                onTap: _closeInfo,
+                child: Container(
+                  color: Colors.black.withOpacity(0.5),
+                ),
+              ),
+            // Info panel slides up from bottom
+            if (_infoVisible) _buildInfoPanel(context, isCompact),
           ],
         ),
       ),
@@ -478,13 +488,14 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> {
   }
 
   Widget _buildVideoContainer(bool isCompact) {
-    return Container(
-      width: double.infinity,
-      color: Colors.black,
-      child: Center(
-        child: AspectRatio(
-          aspectRatio: _currentAspectRatio,
-          child: _buildPlayerBody(isCompact),
+    return SizedBox.expand(
+      child: Container(
+        color: Colors.black,
+        child: Center(
+          child: AspectRatio(
+            aspectRatio: _currentAspectRatio,
+            child: _buildPlayerBody(isCompact),
+          ),
         ),
       ),
     );
@@ -629,8 +640,8 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> {
             end: Alignment.bottomCenter,
             colors: [
               Colors.black.withOpacity(0.0),
-              Colors.black.withOpacity(0.35),
-              Colors.black.withOpacity(0.75),
+              Colors.black.withOpacity(0.05),
+              Colors.black.withOpacity(0.15),
             ],
           ),
         ),
@@ -709,8 +720,13 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> {
                     ),
                   ],
                 ),
-                // Empty spacer for symmetry
-                SizedBox(width: isCompact ? 28 : 32),
+                // Info button
+                _buildPlaybackButton(
+                  icon: Icons.info_outline,
+                  tooltip: 'Video Info',
+                  onPressed: _toggleInfo,
+                  size: isCompact ? 28 : 32,
+                ),
               ],
             ),
           ],
@@ -736,12 +752,12 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> {
   }
 
   Widget _buildSubtitleOverlay(bool isCompact) {
-    final horizontalInset = isCompact ? 16.0 : 24.0;
+    final horizontalInset = isCompact ? 24.0 : 32.0;
     final padding = EdgeInsets.symmetric(
       horizontal: isCompact ? 12 : 16,
       vertical: isCompact ? 6 : 8,
     );
-    final bottomOffset = isCompact ? 120.0 : 140.0;
+    final bottomOffset = isCompact ? 70.0 : 80.0;
 
     return Positioned(
       left: horizontalInset,
@@ -774,45 +790,109 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> {
     );
   }
 
-  Widget _buildMetadataSection(BuildContext context, bool isCompact) {
+  Widget _buildInfoPanel(BuildContext context, bool isCompact) {
     final theme = Theme.of(context);
+    final screenHeight = MediaQuery.of(context).size.height;
+    final panelHeight = screenHeight * 0.6; // 60% of screen height
 
-    return Container(
-      width: double.infinity,
-      color: theme.colorScheme.surface,
-      child: ListView(
-        padding: EdgeInsets.all(isCompact ? 12 : 16),
-        children: [
-          if (widget.record.filename != null)
-            _InfoRow(label: 'Name', value: widget.record.filename!),
-          if (widget.record.locationLabel != null)
-            _InfoRow(label: 'Location', value: widget.record.locationLabel!),
-          if (widget.record.capturedAtDisplay != null)
-            _InfoRow(label: 'Captured', value: widget.record.capturedAtDisplay!),
-          if (widget.record.folder != null)
-            _InfoRow(label: 'Folder', value: widget.record.folder!),
-          if (widget.record.duration != null)
-            _InfoRow(label: 'Duration', value: _formatDuration(widget.record.duration!)),
-          if (widget.record.transcriptState != null)
-            _InfoRow(label: 'Transcript Status', value: widget.record.transcriptState!),
-          if (_subtitleEntries.isNotEmpty)
-            const _InfoRow(label: 'Subtitles', value: 'Available (SRT)'),
-          if (_subtitleEntries.isEmpty && widget.record.transcriptAvailable)
-            _InfoRow(
-              label: 'Subtitles',
-              value: _subtitleError ?? 'Loading…',
-            ),
-          if (_subtitleEntries.isEmpty && !widget.record.transcriptAvailable)
-            const _InfoRow(
-              label: 'Subtitles',
-              value: 'Checking for transcription…',
-            ),
-          const SizedBox(height: 16),
-          Text(
-            widget.record.path,
-            style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+    return AnimatedPositioned(
+      duration: const Duration(milliseconds: 300),
+      curve: Curves.easeOut,
+      bottom: 0,
+      left: 0,
+      right: 0,
+      height: panelHeight,
+      child: GestureDetector(
+        onTap: () {}, // Prevent taps from closing when tapping inside panel
+        child: Container(
+          decoration: BoxDecoration(
+            color: theme.colorScheme.surface,
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.3),
+                blurRadius: 10,
+                offset: const Offset(0, -2),
+              ),
+            ],
           ),
-        ],
+          child: Column(
+            children: [
+              // Header with close button
+              Container(
+                padding: EdgeInsets.symmetric(
+                  horizontal: isCompact ? 16 : 20,
+                  vertical: isCompact ? 12 : 16,
+                ),
+                decoration: BoxDecoration(
+                  border: Border(
+                    bottom: BorderSide(
+                      color: theme.colorScheme.outlineVariant,
+                      width: 1,
+                    ),
+                  ),
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text(
+                      'Video Information',
+                      style: theme.textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.close),
+                      onPressed: _closeInfo,
+                      iconSize: isCompact ? 22 : 24,
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(),
+                    ),
+                  ],
+                ),
+              ),
+              // Scrollable content
+              Expanded(
+                child: ListView(
+                  padding: EdgeInsets.all(isCompact ? 16 : 20),
+                  children: [
+                    if (widget.record.filename != null)
+                      _InfoRow(label: 'Name', value: widget.record.filename!),
+                    if (widget.record.locationLabel != null)
+                      _InfoRow(label: 'Location', value: widget.record.locationLabel!),
+                    if (widget.record.capturedAtDisplay != null)
+                      _InfoRow(label: 'Captured', value: widget.record.capturedAtDisplay!),
+                    if (widget.record.folder != null)
+                      _InfoRow(label: 'Folder', value: widget.record.folder!),
+                    if (widget.record.duration != null)
+                      _InfoRow(label: 'Duration', value: _formatDuration(widget.record.duration!)),
+                    if (widget.record.transcriptState != null)
+                      _InfoRow(label: 'Transcript Status', value: widget.record.transcriptState!),
+                    if (_subtitleEntries.isNotEmpty)
+                      const _InfoRow(label: 'Subtitles', value: 'Available (SRT)'),
+                    if (_subtitleEntries.isEmpty && widget.record.transcriptAvailable)
+                      _InfoRow(
+                        label: 'Subtitles',
+                        value: _subtitleError ?? 'Loading…',
+                      ),
+                    if (_subtitleEntries.isEmpty && !widget.record.transcriptAvailable)
+                      const _InfoRow(
+                        label: 'Subtitles',
+                        value: 'Checking for transcription…',
+                      ),
+                    const SizedBox(height: 16),
+                    Text(
+                      widget.record.path,
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: theme.colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }

@@ -183,10 +183,18 @@ def _video_proxy_cmd(src: Path, dst: Path, height: int, bitrate: str, background
         '-c:v', 'libx264',
         '-b:v', bitrate,
         '-preset', preset,
-        '-threads', str(max_threads)
+        '-pix_fmt', 'yuv420p',
+        '-threads', str(max_threads),
     ])
     
-    cmd.extend(['-c:a', 'aac', '-b:a', '128k', '-ac', '2', '-movflags', '+faststart', str(dst)])
+    cmd.extend([
+        '-c:a', 'aac',
+        '-b:a', '128k',
+        '-ac', '2',
+        '-movflags', '+faststart',
+        '-f', 'mp4',
+        str(dst),
+    ])
     return cmd
 
 

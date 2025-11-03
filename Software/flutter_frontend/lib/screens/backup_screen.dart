@@ -165,6 +165,33 @@ class _BackupBody extends ConsumerWidget {
     Future<void> triggerStartTranscription() async {
       final api = ref.read(apiClientProvider);
       try {
+        // First check if the transcription service is running
+        final serviceStatus = await api.getTranscriptionServiceStatus();
+        final isRunning = serviceStatus['running'] as bool? ?? false;
+        
+        if (!isRunning && context.mounted) {
+          // Service not running - show error dialog with instructions
+          showDialog(
+            context: context,
+            builder: (context) => AlertDialog(
+              title: Text('Transcription Service Not Running'),
+              content: Text(
+                serviceStatus['message'] ?? 
+                'The transcription service is not running. Please start it first:\n\n'
+                'sudo systemctl start blackbox-transcription.service'
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  child: Text('OK'),
+                ),
+              ],
+            ),
+          );
+          return;
+        }
+        
+        // Service is running, proceed with transcription
         await api.startTranscription();
         if (context.mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
