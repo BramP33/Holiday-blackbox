@@ -84,6 +84,10 @@ device_labels:
   drone: Drone
   "360": "360"
   lumix_g7: Lumix G7
+  iphone: iPhone
+  sony: Sony
+  insta360: Insta360
+  mobile: Mobile
   camera: Camera
 
 hardware:
