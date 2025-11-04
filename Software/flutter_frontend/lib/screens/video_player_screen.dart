@@ -60,12 +60,17 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> {
       });
 
       // Initialize video player controller
+      // httpHeaders can help with caching behavior on Raspberry Pi
       _controller = VideoPlayerController.networkUrl(
         videoUri,
         videoPlayerOptions: VideoPlayerOptions(
           mixWithOthers: true, // Allow playback even without audio device
           allowBackgroundPlayback: false,
         ),
+        httpHeaders: {
+          // These headers help prevent excessive caching on the device
+          'Cache-Control': 'no-cache, no-store',
+        },
       );
       
       // Set volume to 0 initially to prevent audio errors on devices without speakers
@@ -268,11 +273,27 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> {
 
   @override
   void dispose() {
+    // Cancel all timers first
     _positionTimer?.cancel();
     _transcriptCheckTimer?.cancel();
     _controlsHideTimer?.cancel();
+    
+    // Remove listener before disposing
     _controller.removeListener(_onVideoPlayerUpdate);
+    
+    // Properly stop and dispose the video player
+    // This is critical on Raspberry Pi to prevent memory leaks
+    try {
+      if (_controller.value.isInitialized) {
+        _controller.pause();
+      }
+    } catch (e) {
+      // Ignore errors during cleanup
+    }
+    
+    // Dispose controller - this should free video memory
     _controller.dispose();
+    
     super.dispose();
   }
 

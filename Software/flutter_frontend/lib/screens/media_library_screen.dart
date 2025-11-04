@@ -23,7 +23,7 @@ class MediaLibraryScreen extends ConsumerStatefulWidget {
 }
 
 class _MediaLibraryScreenState extends ConsumerState<MediaLibraryScreen>
-    with SingleTickerProviderStateMixin {
+    with SingleTickerProviderStateMixin, WidgetsBindingObserver {
   late final TabController _tabController;
   int _photoPage = 1;
   int _videoPage = 1;
@@ -37,20 +37,45 @@ class _MediaLibraryScreenState extends ConsumerState<MediaLibraryScreen>
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _tabController = TabController(length: 3, vsync: this)
       ..addListener(() {
         if (!_tabController.indexIsChanging) {
           setState(() {});
+          // Clear some image cache when switching tabs to prevent memory buildup
+          _clearExcessImageCache();
         }
       });
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _tabController.dispose();
     _searchController.dispose();
     _searchFocusNode.dispose();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    super.didChangeAppLifecycleState(state);
+    // When app goes to background or is paused, clear some cache
+    if (state == AppLifecycleState.paused || state == AppLifecycleState.inactive) {
+      _clearExcessImageCache();
+    }
+  }
+
+  void _clearExcessImageCache() {
+    // On Raspberry Pi, we need to be aggressive about clearing image cache
+    // Clear live images that are no longer on screen
+    final imageCache = PaintingBinding.instance.imageCache;
+    
+    // If we're using more than 70% of max cache, clear it
+    if (imageCache.currentSize > (imageCache.maximumSize * 0.7).round()) {
+      imageCache.clear();
+      imageCache.clearLiveImages();
+    }
   }
 
   @override
@@ -348,11 +373,21 @@ class _MediaLibraryScreenState extends ConsumerState<MediaLibraryScreen>
                   return _VideoGridCard(
                     record: record,
                     baseUri: env.baseUri,
-                    onTap: () {
-                      Navigator.of(context).push(
+                    onTap: () async {
+                      // Clear some image cache before opening video player
+                      // This helps prevent memory crashes on Raspberry Pi
+                      _clearExcessImageCache();
+                      
+                      await Navigator.of(context).push(
                         MaterialPageRoute(
                             builder: (_) => VideoPlayerScreen(record: record)),
                       );
+                      
+                      // Clear cache again after returning from video player
+                      // This ensures video memory is fully released
+                      if (mounted) {
+                        _clearExcessImageCache();
+                      }
                     },
                     onDelete: () => _showDeleteVideoDialog(context, record),
                   );

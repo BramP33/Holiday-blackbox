@@ -17,6 +17,12 @@ Future<void> main() async {
   if (Platform.isLinux) {
     VideoPlayerMediaKit.ensureInitialized(linux: true);
   }
+  
+  // Configure image cache for Raspberry Pi - reduce memory usage
+  // Default is 1000 images and 100MB, we reduce this significantly for Pi
+  PaintingBinding.instance.imageCache.maximumSize = 200; // Reduce from 1000 to 200 images
+  PaintingBinding.instance.imageCache.maximumSizeBytes = 50 << 20; // 50MB instead of 100MB
+  
   await SystemChrome.setPreferredOrientations(const [
     DeviceOrientation.landscapeLeft,
     DeviceOrientation.landscapeRight,
