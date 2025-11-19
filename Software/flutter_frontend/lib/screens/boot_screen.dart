@@ -7,6 +7,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 
 import '../models/media_location.dart';
+import '../state/backend_health.dart';
 import '../state/providers.dart';
 import 'root_shell.dart';
 
@@ -46,6 +47,8 @@ class _BootScreenState extends ConsumerState<BootScreen>
     });
 
     Future.microtask(() {
+      // Trigger backend health check and location fetch
+      ref.read(backendHealthProvider);
       ref.read(lastMediaLocationProvider);
     });
     Future.delayed(const Duration(milliseconds: 4200), _goNext);
@@ -61,11 +64,13 @@ class _BootScreenState extends ConsumerState<BootScreen>
   @override
   Widget build(BuildContext context) {
     final locationAsync = ref.watch(lastMediaLocationProvider);
+    final healthAsync = ref.watch(backendHealthProvider);
     final MediaLocation? location = locationAsync.asData?.value;
-    final hasError = locationAsync.hasError;
-    final bool dataResolved = locationAsync.asData != null || hasError;
+    final hasLocationError = locationAsync.hasError;
+    final hasHealthError = healthAsync.hasError;
+    final bool dataResolved = locationAsync.asData != null || hasLocationError;
 
-    if ((hasError || (dataResolved && location == null)) &&
+    if ((hasLocationError || (dataResolved && location == null)) &&
         _fallbackCity == null) {
       _fallbackCity = _fallbackCities[_random.nextInt(_fallbackCities.length)];
     }
@@ -85,11 +90,13 @@ class _BootScreenState extends ConsumerState<BootScreen>
 
     final label = usingFallback
         ? '${fallback.label}, NL'
-        : hasError
-            ? 'Unable to load your last location'
-            : hasLocation
-                ? location.displayLabel()
-                : 'Locating your last story…';
+        : hasHealthError
+            ? 'Waiting for backend to start…'
+            : hasLocationError
+                ? 'Unable to load your last location'
+                : hasLocation
+                    ? location.displayLabel()
+                    : 'Locating your last story…';
     final locationDetails = hasLocation
         ? location.capturedAt
         : usingFallback

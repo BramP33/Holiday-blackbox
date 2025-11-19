@@ -122,6 +122,31 @@ force_rebuild() {
     log_success "Flutter app rebuilt"
 }
 
+# Function to wait for backend to be healthy
+wait_for_backend() {
+    local max_attempts=60
+    local attempt=0
+    local delay=1
+    
+    log "Waiting for backend to be healthy..."
+    
+    while [ $attempt -lt $max_attempts ]; do
+        if curl -s http://127.0.0.1:5000/api/backup/status > /dev/null 2>&1; then
+            success "Backend is healthy and responding!"
+            return 0
+        fi
+        
+        attempt=$((attempt + 1))
+        if [ $((attempt % 10)) -eq 0 ]; then
+            log "Waiting for backend... (attempt $attempt/$max_attempts)"
+        fi
+        sleep $delay
+    done
+    
+    error "Backend did not respond after $max_attempts attempts"
+    return 1
+}
+
 # Function to start web server
 start_web_server() {
     log "Starting web server..."
@@ -149,6 +174,13 @@ start_web_server() {
         echo $WEB_PID > /tmp/blackbox_web.pid
     else
         error "Failed to start web server"
+        cat /tmp/blackbox_web.log
+        return 1
+    fi
+    
+    # Wait for backend to be healthy before proceeding
+    if ! wait_for_backend; then
+        error "Backend failed to become healthy"
         cat /tmp/blackbox_web.log
         return 1
     fi
@@ -260,8 +292,8 @@ start_application() {
     # Start web server
     start_web_server
     
-    # Wait a moment for services to initialize
-    sleep 3
+    # Wait a moment for transcription to initialize
+    sleep 2
     
     # Start Flutter app
     start_app
